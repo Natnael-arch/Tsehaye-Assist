@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">ፀሐይ Assist</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_listening">Listening...</string>
+    <string name="button_label">Tap for Voice</string>
+</resources>

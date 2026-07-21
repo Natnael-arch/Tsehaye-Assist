@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout android:background="#ff0a0a0a" android:layout_width="fill_parent" android:layout_height="fill_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:id="@+id/headerRow" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="16.0dip" android:paddingHorizontal="24.0dip" app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/btnBookmark" android:layout_width="24.0dip" android:layout_height="24.0dip" android:src="@drawable/ic_bookmark" app:tint="#ff666666" />
+        <TextView android:textSize="17.0sp" android:textColor="#ffffffff" android:gravity="center" android:layout_width="0.0dip" android:layout_height="wrap_content" android:text="Tsehaye Assist" android:layout_weight="1.0" android:fontFamily="sans-serif" android:letterSpacing="0.047" />
+        <ImageView android:id="@+id/btnSettings" android:layout_width="24.0dip" android:layout_height="24.0dip" android:src="@drawable/ic_settings" app:tint="#ff666666" />
+    </LinearLayout>
+    <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:id="@+id/statusBadge" android:background="@drawable/bg_status_pill" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="32.0dip" android:paddingHorizontal="14.0dip" android:paddingVertical="6.0dip" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@id/headerRow">
+        <View android:id="@+id/statusDot" android:background="@drawable/bg_status_dot" android:layout_width="6.0dip" android:layout_height="6.0dip" android:layout_marginEnd="8.0dip" />
+        <TextView android:textSize="12.0sp" android:textColor="#ffcccccc" android:id="@+id/statusTextView" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Idle" android:fontFamily="sans-serif-light" android:letterSpacing="0.04" />
+    </LinearLayout>
+    <com.example.voicelauncher.WaveformView android:id="@+id/waveformView" android:layout_width="0dp" android:layout_height="120.0dip" android:layout_marginHorizontal="8.0dip" app:layout_constraintBottom_toTopOf="@id/touchArea" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@id/statusBadge" />
+    <FrameLayout android:id="@+id/touchArea" android:background="@android:color/transparent" android:layout_width="fill_parent" android:layout_height="0.0dip" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintHeight_percent="0.52">
+        <FrameLayout android:layout_gravity="center" android:layout_width="fill_parent" android:layout_height="fill_parent">
+            <View android:layout_gravity="center" android:id="@+id/pulseRing1" android:background="@drawable/bg_pulse_ring_1" android:visibility="gone" android:layout_width="80.0dip" android:layout_height="80.0dip" />
+            <View android:layout_gravity="center" android:id="@+id/pulseRing2" android:background="@drawable/bg_pulse_ring_2" android:visibility="gone" android:layout_width="80.0dip" android:layout_height="80.0dip" />
+            <FrameLayout android:layout_gravity="center" android:id="@+id/micButton" android:background="@drawable/bg_mic_button" android:layout_width="74.0dip" android:layout_height="74.0dip">
+                <ImageView android:layout_gravity="center" android:layout_width="30.0dip" android:layout_height="30.0dip" android:src="@drawable/ic_microphone" />
+            </FrameLayout>
+            <TextView android:textSize="11.0sp" android:textColor="#ff333333" android:layout_gravity="center" android:id="@+id/hintText" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="60.0dip" android:text="HOLD ANYWHERE BELOW TO SPEAK" android:fontFamily="sans-serif-light" android:letterSpacing="0.07" />
+        </FrameLayout>
+    </FrameLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>
