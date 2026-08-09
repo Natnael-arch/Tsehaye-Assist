@@ -54,6 +54,11 @@ class IntentDispatcher(private val context: Context) {
     @Volatile var awaitingConfirmationCallId: String? = null
         private set
 
+    // ── DIAGNOSTIC: Track search_contacts call sequence ──
+    private var searchCallCounter = 0
+    private var lastDisambiguationNames: List<String>? = null
+    private var lastSearchRawName: String? = null
+
     interface ToolCallback {
         fun sendToolResponse(callId: String, functionName: String, resultMap: Map<String, Any>)
         fun sendAmbiguity(callId: String, matches: List<String>)
@@ -63,9 +68,14 @@ class IntentDispatcher(private val context: Context) {
     data class ResolvedContact(val match: MatchResult, val path: String)
 
     fun resolveContactFromDualScriptQuery(rawName: String, contacts: List<Contact>): ResolvedContact {
+        Log.w("IntentDispatcher", "┌── resolveContactFromDualScriptQuery ──")
+        Log.w("IntentDispatcher", "│  rawName='$rawName'")
+
         var parts = rawName.split(Regex("[,|/]")).map { it.trim() }.filter { it.isNotEmpty() }
+        Log.w("IntentDispatcher", "│  split by [,|/] → parts=$parts")
         if (parts.size < 2) {
             parts = rawName.split(" ").map { it.trim() }.filter { it.isNotEmpty() }
+            Log.w("IntentDispatcher", "│  split by space → parts=$parts")
         }
 
         val rawAmharic = parts.firstOrNull { p -> p.any { it in '\u1200'..'\u137F' } }
@@ -78,23 +88,31 @@ class IntentDispatcher(private val context: Context) {
         val amharicQuery = AmharicCleaner.clean(rawAmharic)
         val latinQuery = rawLatin?.trim()
 
-        Log.d("IntentDispatcher", "DualScript resolve: raw='$rawName' amharic='$amharicQuery' latin='$latinQuery'")
+        Log.w("IntentDispatcher", "│  rawAmharic='$rawAmharic' → cleaned='$amharicQuery'")
+        Log.w("IntentDispatcher", "│  rawLatin='$rawLatin' → trimmed='$latinQuery'")
 
         if (amharicQuery.isNotBlank()) {
+            Log.w("IntentDispatcher", "│  ATTEMPTING amharic path with query='$amharicQuery'")
             val match = contactMatcher.findBestMatches(amharicQuery, contacts)
             if (match !is MatchResult.NoMatch) {
+                Log.w("IntentDispatcher", "└── RESOLVED via amharic path")
                 return ResolvedContact(match, "amharic:$amharicQuery")
             }
+            Log.w("IntentDispatcher", "│  amharic path → NoMatch, falling through")
         }
 
         if (!latinQuery.isNullOrBlank()) {
+            Log.w("IntentDispatcher", "│  ATTEMPTING latin path with query='$latinQuery'")
             val match = contactMatcher.findBestMatches(latinQuery, contacts)
             if (match !is MatchResult.NoMatch) {
+                Log.w("IntentDispatcher", "└── RESOLVED via latin path")
                 return ResolvedContact(match, "latin:$latinQuery")
             }
+            Log.w("IntentDispatcher", "│  latin path → NoMatch")
         }
 
         val usedQuery = amharicQuery.ifBlank { latinQuery } ?: "unknown"
+        Log.w("IntentDispatcher", "└── RESOLVED: NoMatch (both paths failed)")
         return ResolvedContact(MatchResult.NoMatch, "none:$usedQuery")
     }
 
@@ -126,6 +144,28 @@ class IntentDispatcher(private val context: Context) {
         toolCallback: ToolCallback
     ) {
         val rawName = args["name"] as? String
+        searchCallCounter++
+        val callNum = searchCallCounter
+
+        // ── DIAGNOSTIC: Log raw input and call sequence ──
+        Log.w("IntentDispatcher", "╔══ search_contacts CALL #$callNum ══")
+        Log.w("IntentDispatcher", "║  callId=$callId")
+        Log.w("IntentDispatcher", "║  rawName (from Gemini)='$rawName'")
+        Log.w("IntentDispatcher", "║  previousRawName='$lastSearchRawName'")
+        if (lastDisambiguationNames != null) {
+            Log.w("IntentDispatcher", "║  ⚠️ DISAMBIGUATION WAS ACTIVE — last candidates: $lastDisambiguationNames")
+            Log.w("IntentDispatcher", "║  ⚠️ Gemini's follow-up name='$rawName'")
+            val isExactRepeat = rawName == lastSearchRawName
+            val matchesCandidate = lastDisambiguationNames?.any { it.equals(rawName, ignoreCase = true) } == true
+            Log.w("IntentDispatcher", "║  ⚠️ isExactRepeatOfOriginalQuery=$isExactRepeat")
+            Log.w("IntentDispatcher", "║  ⚠️ matchesOneOfTheCandidates=$matchesCandidate")
+        } else {
+            Log.w("IntentDispatcher", "║  (no prior disambiguation active — fresh search)")
+        }
+        Log.w("IntentDispatcher", "╚══════════════════════════════════════")
+
+        lastSearchRawName = rawName
+
         if (rawName.isNullOrBlank()) {
             toolCallback.sendToolResponse(callId, "search_contacts", mapOf("result" to "NO_NAME_PROVIDED"))
             return
@@ -138,6 +178,7 @@ class IntentDispatcher(private val context: Context) {
 
             when (resolved.match) {
                 is MatchResult.ExactMatch -> {
+                    lastDisambiguationNames = null  // clear disambiguation state
                     toolCallback.vibrate()
                     pendingAction = PendingAction.Call(
                         resolved.match.contact.name,
@@ -157,16 +198,18 @@ class IntentDispatcher(private val context: Context) {
                     Log.w("IntentDispatcher", "resultMap['name']='${pendingResultMap["name"]}'")
                     Log.w("IntentDispatcher", "resultMap['number']='${pendingResultMap["number"]}'")
                     Log.w("IntentDispatcher", "FULL resultMap=$pendingResultMap")
-                    Log.w("IntentDispatcher", "EXPECTING Gemini to call confirm_pending_action or cancel_pending_action next")
                     Log.w("IntentDispatcher", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                     toolCallback.sendToolResponse(callId, "search_contacts", pendingResultMap)
                 }
                 is MatchResult.DisambiguationRequired -> {
                     val names = resolved.match.candidates.map { it.name }
+                    lastDisambiguationNames = names  // track what was offered
+                    Log.w("IntentDispatcher", "⚠️ DISAMBIGUATION: offering candidates $names for rawName='$rawName'")
                     toolCallback.vibrate()
                     toolCallback.sendAmbiguity(callId, names)
                 }
                 is MatchResult.NoMatch -> {
+                    lastDisambiguationNames = null
                     toolCallback.sendToolResponse(callId, "search_contacts", mapOf(
                         "result" to "NOT_FOUND",
                         "query" to resolved.path
