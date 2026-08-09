@@ -1,5 +1,6 @@
 package com.example.voicelauncher
 
+import android.util.Log
 import kotlin.math.max
 import kotlin.math.min
 
@@ -23,21 +24,50 @@ class ContactMatcher {
             Pair(contact, score)
         }.sortedByDescending { it.second }
 
-        if (scores.isEmpty()) return MatchResult.NoMatch
+        // ── DIAGNOSTIC: Log ALL scored candidates (top 10 + any ≥0.4) ──
+        Log.w("ContactMatcher", "╔══ MATCH SCORES for query='$normalizedTarget' (${contacts.size} contacts) ══")
+        val interesting = scores.take(10).toMutableList()
+        scores.drop(10).filter { it.second >= 0.4 }.forEach { interesting.add(it) }
+        interesting.sortedByDescending { it.second }.forEachIndexed { i, (contact, score) ->
+            val marker = when {
+                score >= 0.9 -> "✅ EXACT"
+                score >= 0.6 -> "🟡 DISAMBIG"
+                else -> "❌ BELOW"
+            }
+            Log.w("ContactMatcher", "║  #${i+1} score=%.4f $marker name='${contact.name}' normalized='${contact.normalizedName}'".format(score))
+        }
+
+        if (scores.isEmpty()) {
+            Log.w("ContactMatcher", "║  (no contacts to score)")
+            Log.w("ContactMatcher", "╚══ RESULT: NoMatch ══")
+            return MatchResult.NoMatch
+        }
 
         val bestScore = scores[0].second
+        Log.w("ContactMatcher", "║  bestScore=%.4f threshold_exact=0.9 threshold_disambig=0.6".format(bestScore))
 
         return when {
-            bestScore >= 0.9 -> MatchResult.ExactMatch(scores[0].first)
+            bestScore >= 0.9 -> {
+                Log.w("ContactMatcher", "╚══ RESULT: ExactMatch → '${scores[0].first.name}' (score=%.4f) ══".format(bestScore))
+                MatchResult.ExactMatch(scores[0].first)
+            }
             bestScore >= 0.6 -> {
                 // Return up to top 3 candidates that are reasonably close to the best score
                 val candidates = scores.take(3)
                     .filter { it.second >= 0.6 && it.second >= (bestScore * 0.8) }
                     .map { it.first }
-                if (candidates.isEmpty()) MatchResult.NoMatch
-                else MatchResult.DisambiguationRequired(candidates)
+                if (candidates.isEmpty()) {
+                    Log.w("ContactMatcher", "╚══ RESULT: NoMatch (candidates filtered out) ══")
+                    MatchResult.NoMatch
+                } else {
+                    Log.w("ContactMatcher", "╚══ RESULT: DisambiguationRequired → ${candidates.map { "'${it.name}'" }} ══")
+                    MatchResult.DisambiguationRequired(candidates)
+                }
             }
-            else -> MatchResult.NoMatch
+            else -> {
+                Log.w("ContactMatcher", "╚══ RESULT: NoMatch (bestScore=%.4f < 0.6) ══".format(bestScore))
+                MatchResult.NoMatch
+            }
         }
     }
 
