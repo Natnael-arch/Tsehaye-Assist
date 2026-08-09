@@ -143,6 +143,25 @@ class IntentDispatcher(private val context: Context) {
         args: Map<String, Any>,
         toolCallback: ToolCallback
     ) {
+        if (awaitingConfirmationCallId != null) {
+            Log.w("IntentDispatcher", "Ignored duplicate tool call while awaiting local confirmation: search_contacts")
+            val action = pendingAction
+            if (action is PendingAction.Call) {
+                toolCallback.sendToolResponse(callId, "search_contacts", mapOf(
+                    "result" to "PENDING_CONFIRMATION",
+                    "name" to action.contactName,
+                    "number" to action.number
+                ))
+            } else if (action is PendingAction.Sms) {
+                toolCallback.sendToolResponse(callId, "search_contacts", mapOf(
+                    "result" to "PENDING_CONFIRMATION",
+                    "name" to action.contactName,
+                    "number" to action.number,
+                    "message_body" to action.messageBody
+                ))
+            }
+            return
+        }
         val rawName = args["name"] as? String
         searchCallCounter++
         val callNum = searchCallCounter
@@ -289,6 +308,25 @@ class IntentDispatcher(private val context: Context) {
         args: Map<String, Any>,
         toolCallback: ToolCallback
     ) {
+        if (awaitingConfirmationCallId != null) {
+            Log.w("IntentDispatcher", "Ignored duplicate tool call while awaiting local confirmation: send_text_message")
+            val action = pendingAction
+            if (action is PendingAction.Call) {
+                toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
+                    "result" to "PENDING_CONFIRMATION",
+                    "name" to action.contactName,
+                    "number" to action.number
+                ))
+            } else if (action is PendingAction.Sms) {
+                toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
+                    "result" to "PENDING_CONFIRMATION",
+                    "name" to action.contactName,
+                    "number" to action.number,
+                    "message_body" to action.messageBody
+                ))
+            }
+            return
+        }
         val recipientName = args["recipient_name"] as? String
         val messageBody = args["message_body"] as? String
         if (recipientName.isNullOrBlank() || messageBody.isNullOrBlank()) {

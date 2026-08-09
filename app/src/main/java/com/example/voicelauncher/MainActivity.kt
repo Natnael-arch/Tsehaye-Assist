@@ -198,12 +198,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                                 val text = part.getString("text")
                                 Log.d("VoiceLauncher", "AI Text: $text")
                                 if (awaitingId != null) {
-                                    Log.w("VoiceLauncher", "⚠️ GEMINI GENERATED TEXT INSTEAD OF CONFIRM/CANCEL: \"$text\"")
-                                    Log.w("VoiceLauncher", "⚠️ THIS IS THE BUG — Gemini should have called confirm_pending_action or cancel_pending_action")
-                                    Log.w("VoiceLauncher", "⚠️ Instead it generated a text response. Possible causes:")
-                                    Log.w("VoiceLauncher", "⚠️   1. Tool response schema mismatch (relay functionDeclarations don't declare 'name' field)")
-                                    Log.w("VoiceLauncher", "⚠️   2. MASTER_PROMPT Rule 6 not instructing Gemini to use the 'name' field")
-                                    Log.w("VoiceLauncher", "⚠️   3. Gemini doesn't understand PENDING_CONFIRMATION means it should wait for user confirmation")
+                                    Log.w("VoiceLauncher", "⚠️ GEMINI GENERATED TEXT WHILE AWAITING CONFIRMATION: \"$text\"")
+                                    Log.w("VoiceLauncher", "⚠️ Gemini should remain silent and wait for the local touch gesture.")
                                     awaitingConfirmationCallId_checkCleared()
                                 }
                                 runOnUiThread { statusTextView.text = text.take(80) }
@@ -226,22 +222,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                                 val callId = fc.optString("id", "")
                                 Log.d("VoiceLauncher", "Tool call (in serverContent): $name args=$args id=$callId")
                                 if (awaitingId != null) {
-                                    when (name) {
-                                        "confirm_pending_action" -> {
-                                            Log.i("VoiceLauncher", "✅ Gemini correctly called confirm_pending_action after PENDING_CONFIRMATION")
-                                        }
-                                        "cancel_pending_action" -> {
-                                            Log.i("VoiceLauncher", "✅ Gemini correctly called cancel_pending_action after PENDING_CONFIRMATION")
-                                        }
-                                        "search_contacts" -> {
-                                            Log.w("VoiceLauncher", "⚠️ GEMINI CALLED search_contacts AGAIN instead of confirm/cancel")
-                                            Log.w("VoiceLauncher", "⚠️ This is the 'who do you want to call?' loop bug")
-                                            Log.w("VoiceLauncher", "⚠️ Args: $args")
-                                        }
-                                        else -> {
-                                            Log.w("VoiceLauncher", "⚠️ GEMINI CALLED UNEXPECTED TOOL '$name' after PENDING_CONFIRMATION")
-                                            Log.w("VoiceLauncher", "⚠️ Args: $args")
-                                        }
+                                    if (name == "search_contacts" || name == "send_text_message") {
+                                        Log.w("VoiceLauncher", "⚠️ Gemini attempted duplicate tool call '$name' while awaiting confirmation. Ignored by IntentDispatcher backstop.")
+                                    } else {
+                                        Log.w("VoiceLauncher", "⚠️ Gemini attempted unexpected tool '$name' while awaiting confirmation.")
                                     }
                                     awaitingConfirmationCallId_checkCleared()
                                 }
@@ -286,22 +270,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                         val callId = call.optString("id", "")
                         Log.d("VoiceLauncher", "Tool call: $name args=$args id=$callId")
                         if (awaitingId != null) {
-                            when (name) {
-                                "confirm_pending_action" -> {
-                                    Log.i("VoiceLauncher", "✅ Gemini correctly called confirm_pending_action after PENDING_CONFIRMATION")
-                                }
-                                "cancel_pending_action" -> {
-                                    Log.i("VoiceLauncher", "✅ Gemini correctly called cancel_pending_action after PENDING_CONFIRMATION")
-                                }
-                                "search_contacts" -> {
-                                    Log.w("VoiceLauncher", "⚠️ GEMINI CALLED search_contacts AGAIN instead of confirm/cancel")
-                                    Log.w("VoiceLauncher", "⚠️ This is the 'who do you want to call?' loop bug")
-                                    Log.w("VoiceLauncher", "⚠️ Args: $args")
-                                }
-                                else -> {
-                                    Log.w("VoiceLauncher", "⚠️ GEMINI CALLED UNEXPECTED TOOL '$name' after PENDING_CONFIRMATION")
-                                    Log.w("VoiceLauncher", "⚠️ Args: $args")
-                                }
+                            if (name == "search_contacts" || name == "send_text_message") {
+                                Log.w("VoiceLauncher", "⚠️ Gemini attempted duplicate tool call '$name' while awaiting confirmation. Ignored by IntentDispatcher backstop.")
+                            } else {
+                                Log.w("VoiceLauncher", "⚠️ Gemini attempted unexpected tool '$name' while awaiting confirmation.")
                             }
                             awaitingConfirmationCallId_checkCleared()
                         }
