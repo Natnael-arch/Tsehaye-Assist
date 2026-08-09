@@ -11,6 +11,8 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import android.os.Handler
+import android.os.Looper
 
 class GeminiRelayClient(private val url: String) {
 
@@ -25,6 +27,9 @@ class GeminiRelayClient(private val url: String) {
 
     private var webSocket: WebSocket? = null
     private var isConnected = false
+    private var reconnectAttempts = 0
+    private val reconnectHandler = Handler(Looper.getMainLooper())
+    private var shouldReconnect = true
 
     interface RelayCallback {
         fun onConnected()
@@ -35,6 +40,25 @@ class GeminiRelayClient(private val url: String) {
     }
 
     var callback: RelayCallback? = null
+
+    private fun scheduleReconnect() {
+        if (!shouldReconnect) return
+        val delayMs = when (reconnectAttempts) {
+            0 -> 1_000L
+            1 -> 2_000L
+            2 -> 4_000L
+            3 -> 8_000L
+            4 -> 16_000L
+            else -> 30_000L
+        }
+        reconnectAttempts++
+        reconnectHandler.postDelayed({
+            if (shouldReconnect && !isConnected) {
+                Log.d(TAG, "Reconnect attempt $reconnectAttempts (delay was ${delayMs}ms)")
+                connect()
+            }
+        }, delayMs)
+    }
 
     fun connect() {
         if (isConnected) {
@@ -49,6 +73,7 @@ class GeminiRelayClient(private val url: String) {
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                reconnectAttempts = 0
                 Log.d(TAG, "Connected to relay server")
                 isConnected = true
                 callback?.onConnected()
@@ -86,12 +111,14 @@ class GeminiRelayClient(private val url: String) {
                 Log.d(TAG, "Closed: code=$code reason=$reason")
                 isConnected = false
                 callback?.onDisconnected(reason)
+                if (code != 1000) scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket failure: ${t.message}", t)
                 isConnected = false
                 callback?.onFailure(t.message ?: "Unknown WebSocket error")
+                scheduleReconnect()
             }
         })
     }
@@ -145,6 +172,8 @@ class GeminiRelayClient(private val url: String) {
     }
 
     fun disconnect() {
+        shouldReconnect = false
+        reconnectHandler.removeCallbacksAndMessages(null)
         Log.d(TAG, "Disconnecting")
         webSocket?.close(1000, "Client disconnect")
         isConnected = false
