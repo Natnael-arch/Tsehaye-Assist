@@ -28,8 +28,8 @@ Visually impaired and low-vision users in Ethiopia who own an Android phone and 
 
 Tsehay Assist is two parts working together:
 
-1. **The Android app** ([this repo](.)) — captures voice, plays back responses, and holds the safety-critical logic: matching a spoken name against the phone's real contact list (handling Amharic/Latin script differences and fuzzy pronunciation), and a **mandatory touch-confirmation gate** before any call or message is actually sent. The AI can suggest an action, but only a deliberate physical touch from the user executes it — nothing happens by voice alone.
-2. **A relay server** ([Tsehaye_Assist_Relay_Server](https://github.com/Natnael-arch/Tsehaye_Assist_Relay_Server)) — a lightweight Node.js WebSocket proxy that securely bridges the app to Google's Gemini Live API (real-time voice AI), keeping the API key off the device and handling the live audio streaming protocol.
+1. **The Android app** ([this repo](.)) - captures voice, plays back responses, and holds the safety-critical logic: matching a spoken name against the phone's real contact list (handling Amharic/Latin script differences and fuzzy pronunciation), and a **mandatory touch-confirmation gate** before any call or message is actually sent. The AI can suggest an action, but only a deliberate physical touch from the user executes it, nothing happens by voice alone.
+2. **A relay server** ([Tsehaye_Assist_Relay_Server](https://github.com/Natnael-arch/Tsehaye_Assist_Relay_Server))- a lightweight Node.js WebSocket proxy that securely bridges the app to Google's Gemini Live API (real-time voice AI), keeping the API key off the device and handling the live audio streaming protocol.
 
 ```
 User's voice
@@ -47,7 +47,7 @@ Call placed / text sent — only after user confirms
 
 ## Why the confirmation gate matters
 
-This is the core design decision behind Tsehay Assist: **voice AI proposes, the user disposes.** A visually impaired user relying entirely on an AI's interpretation of their speech needs a safety net — accidentally calling the wrong person, or worse, sending an unintended message, is a real risk with voice-only control. Every irreversible action (calling, texting) requires the user to physically touch the screen to confirm, after hearing the AI read back exactly what it's about to do. Voice gets you 90% of the way there; a deliberate touch closes the loop safely.
+This is the core design decision behind Tsehay Assist: **voice AI proposes, the user disposes.** A visually impaired user relying entirely on an AI's interpretation of their speech needs a safety net, accidentally calling the wrong person, or worse, sending an unintended message, is a real risk with voice-only control. Every irreversible action (calling, texting) requires the user to physically touch the screen to confirm, after hearing the AI read back exactly what it's about to do. Voice gets you 90% of the way there; a deliberate touch closes the loop safely.
 
 ## Tech stack
 
@@ -98,7 +98,7 @@ Tsehaye-Assist/
 
 ## Related repo
 
-- [Tsehaye_Assist_Relay_Server](https://github.com/Natnael-arch/Tsehaye_Assist_Relay_Server) — the WebSocket relay that connects this app to Gemini Live.
+- [Tsehaye_Assist_Relay_Server](https://github.com/Natnael-arch/Tsehaye_Assist_Relay_Server) - the WebSocket relay that connects this app to Gemini Live.
 
 ---
 
