@@ -19,13 +19,7 @@ import android.widget.Toast
 import kotlinx.coroutines.*
 import java.util.*
 
-object AmharicCleaner {
-    fun clean(input: String): String {
-        return input.lowercase()
-            .replace(Regex("[^\\p{L}\\p{N}\\s]"), "")
-            .trim()
-    }
-}
+
 
 class IntentDispatcher(private val context: Context) {
 
@@ -65,56 +59,7 @@ class IntentDispatcher(private val context: Context) {
         fun vibrate()
     }
 
-    data class ResolvedContact(val match: MatchResult, val path: String)
 
-    fun resolveContactFromDualScriptQuery(rawName: String, contacts: List<Contact>): ResolvedContact {
-        Log.w("IntentDispatcher", "┌── resolveContactFromDualScriptQuery ──")
-        Log.w("IntentDispatcher", "│  rawName='$rawName'")
-
-        var parts = rawName.split(Regex("[,|/]")).map { it.trim() }.filter { it.isNotEmpty() }
-        Log.w("IntentDispatcher", "│  split by [,|/] → parts=$parts")
-        if (parts.size < 2) {
-            parts = rawName.split(" ").map { it.trim() }.filter { it.isNotEmpty() }
-            Log.w("IntentDispatcher", "│  split by space → parts=$parts")
-        }
-
-        val rawAmharic = parts.firstOrNull { p -> p.any { it in '\u1200'..'\u137F' } }
-                         ?: parts.firstOrNull() ?: rawName
-
-        val rawLatin = parts.lastOrNull { p ->
-            p.any { it in 'A'..'z' } && p != rawAmharic
-        } ?: if (parts.size > 1) parts.last() else null
-
-        val amharicQuery = AmharicCleaner.clean(rawAmharic)
-        val latinQuery = rawLatin?.trim()
-
-        Log.w("IntentDispatcher", "│  rawAmharic='$rawAmharic' → cleaned='$amharicQuery'")
-        Log.w("IntentDispatcher", "│  rawLatin='$rawLatin' → trimmed='$latinQuery'")
-
-        if (amharicQuery.isNotBlank()) {
-            Log.w("IntentDispatcher", "│  ATTEMPTING amharic path with query='$amharicQuery'")
-            val match = contactMatcher.findBestMatches(amharicQuery, contacts)
-            if (match !is MatchResult.NoMatch) {
-                Log.w("IntentDispatcher", "└── RESOLVED via amharic path")
-                return ResolvedContact(match, "amharic:$amharicQuery")
-            }
-            Log.w("IntentDispatcher", "│  amharic path → NoMatch, falling through")
-        }
-
-        if (!latinQuery.isNullOrBlank()) {
-            Log.w("IntentDispatcher", "│  ATTEMPTING latin path with query='$latinQuery'")
-            val match = contactMatcher.findBestMatches(latinQuery, contacts)
-            if (match !is MatchResult.NoMatch) {
-                Log.w("IntentDispatcher", "└── RESOLVED via latin path")
-                return ResolvedContact(match, "latin:$latinQuery")
-            }
-            Log.w("IntentDispatcher", "│  latin path → NoMatch")
-        }
-
-        val usedQuery = amharicQuery.ifBlank { latinQuery } ?: "unknown"
-        Log.w("IntentDispatcher", "└── RESOLVED: NoMatch (both paths failed)")
-        return ResolvedContact(MatchResult.NoMatch, "none:$usedQuery")
-    }
 
     fun handleToolCall(
         callId: String,
@@ -192,7 +137,7 @@ class IntentDispatcher(private val context: Context) {
 
         mainScope.launch {
             val contacts = withContext(Dispatchers.IO) { contactProvider.fetchContacts() }
-            val resolved = resolveContactFromDualScriptQuery(rawName, contacts)
+            val resolved = ContactResolver.resolve(rawName, contacts)
             Log.d("IntentDispatcher", "search_contacts path: ${resolved.path}")
 
             when (resolved.match) {
@@ -343,7 +288,7 @@ class IntentDispatcher(private val context: Context) {
 
         mainScope.launch {
             val contacts = withContext(Dispatchers.IO) { contactProvider.fetchContacts() }
-            val resolved = resolveContactFromDualScriptQuery(recipientName, contacts)
+            val resolved = ContactResolver.resolve(recipientName, contacts)
             Log.d("IntentDispatcher", "send_text_message path: ${resolved.path}")
 
             when (resolved.match) {
