@@ -1,6 +1,6 @@
-# Tsehay Assist 🎙️
+# Tsehay Assist
 
-**A voice-first Android app that lets visually impaired users in Ethiopia call and text their contacts — completely hands-free, in Amharic or English.**
+**A voice-first Android app that lets visually impaired users in Ethiopia call and text their contacts completely hands-free, in Amharic or English.**
 
 Built by [Natnael Beshane](https://github.com/Natnael-arch) · Addis Ababa, Ethiopia
 
@@ -8,15 +8,15 @@ Built by [Natnael Beshane](https://github.com/Natnael-arch) · Addis Ababa, Ethi
 
 ## The problem
 
-Touchscreens weren't designed with visually impaired users in mind. Small icons, unlabeled buttons, and text-heavy interfaces make something as basic as calling a family member a real daily obstacle — especially for older or blind users in Ethiopia, where most existing accessibility tools are built for English and don't handle Amharic well, whether that's spoken input, contact names, or dual-script (Amharic/Latin) name matching.
+Touchscreens weren't designed with visually impaired users in mind. Small icons, unlabeled buttons, and text-heavy interfaces make something as basic as calling a family member a real daily obstacle, especially for older or blind users in Ethiopia, where most existing accessibility tools are built for English and don't handle Amharic well, whether that's spoken input, contact names, or dual-script (Amharic/Latin) name matching.
 
 ## What Tsehay Assist does
 
 You speak. It listens, understands, and acts.
 
-- **"ደዊትን ደውልልኝ" ("Call Dawit")** → Tsehay Assist finds the right contact — whether they're saved as `ዳዊት`, `Dawit`, or any close variant — reads the name back to you, and waits for you to physically confirm before it actually places the call.
-- **Send a text** the same way — say who and what, Tsehay Assist reads it back for confirmation, then sends it.
-- **Fully bilingual** — speak and receive responses in Amharic or English, whichever the user is comfortable with.
+- **"ደዊትን ደውልልኝ" ("Call Dawit")** → Tsehay Assist finds the right contact,whether they're saved as `ዳዊት`, `Dawit`, or any close variant, reads the name back to you, and waits for you to physically confirm before it actually places the call.
+- **Send a text** the same way, say who and what, Tsehay Assist reads it back for confirmation, then sends it.
+- **Fully bilingual** - speak and receive responses in Amharic or English, whichever the user is comfortable with.
 
 The whole interaction is voice in, voice out. No menus to hunt through, no small text to read.
 
@@ -55,11 +55,11 @@ This is the core design decision behind Tsehay Assist: **voice AI proposes, the 
 - **Voice AI**: Google Gemini Live API (real-time bidirectional audio + function calling)
 - **Relay server**: Node.js, Express, `ws` (WebSocket), deployed on Railway
 - **Contact matching**: custom Levenshtein-based fuzzy matcher with Amharic-script cleanup, tuned for dual-script (Amharic/Latin) name resolution
-- **Testing**: JUnit-based unit test suite for the contact resolution logic, runs on the JVM in seconds — no emulator or build required
+- **Testing**: JUnit-based unit test suite for the contact resolution logic, runs on the JVM in seconds, no emulator or build required
 
 ## Current status
 
-Tsehay Assist is an actively developed working prototype. Core functionality — voice-triggered calling and texting, dual-script contact matching, the touch confirmation gate, and reconnect-resilient relay infrastructure — is built and testable end-to-end. Ongoing work includes:
+Tsehay Assist is an actively developed working prototype. Core functionality,voice-triggered calling and texting, dual-script contact matching, the touch confirmation gate, and reconnect-resilient relay infrastructure, is built and testable end-to-end. Ongoing work includes:
 
 - Audio narration of call state (ringing, connected, call ended)
 - Broader real-world testing and tuning against Ethiopian names and accents
@@ -68,7 +68,7 @@ Tsehay Assist is an actively developed working prototype. Core functionality —
 
 ## Where this is going
 
-Calling and texting are the starting point, not the destination. Tsehay Assist exists to prove that voice-first, Amharic-aware AI can give visually impaired users independent control over a smartphone — and once that foundation works, the same architecture opens the door to far more: navigating apps by voice, reading out messages, notifications, and documents, describing surroundings through the camera, helping with everyday tasks like online payments or reading labels, and more. The long-term goal is for Tsehay Assist to grow into a full voice-driven layer over the phone itself, not just a contacts tool — built specifically around Ethiopian languages and the real needs of visually impaired users here, rather than adapting a foreign product after the fact.
+Calling and texting are the starting point, not the destination. Tsehay Assist exists to prove that voice-first, Amharic-aware AI can give visually impaired users independent control over a smartphone and once that foundation works, the same architecture opens the door to far more: navigating apps by voice, reading out messages, notifications, and documents, describing surroundings through the camera, helping with everyday tasks like online payments or reading labels, and more. The long-term goal is for Tsehay Assist to grow into a full voice-driven layer over the phone itself, not just a contacts tool,built specifically around Ethiopian languages and the real needs of visually impaired users here, rather than adapting a foreign product after the fact.
 
 ## Project structure
 
@@ -102,4 +102,4 @@ Tsehaye-Assist/
 
 ---
 
-*Tsehay Assist is being built with real Ethiopian users in mind — this README and the project itself are evolving alongside it.*
+*Tsehay Assist is being built with real Ethiopian users in mind, this README and the project itself are evolving alongside it.*
