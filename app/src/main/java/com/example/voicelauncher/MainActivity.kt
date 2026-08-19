@@ -22,6 +22,9 @@ import java.io.File
 import androidx.core.view.GestureDetectorCompat
 import android.view.GestureDetector
 import org.json.JSONObject
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
 
 class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
 
@@ -42,6 +45,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private var audioBuffer = ByteArrayOutputStream()
     private var audioResponseSampleRate = 24000
     private var isRecording = false
+    private var isInCall: Boolean = false
+    private var phoneStateListener: PhoneStateListener? = null
+    private var telephonyCallback: TelephonyCallback? = null
+    private lateinit var telephonyManager: TelephonyManager
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -140,6 +147,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             } else {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
+                        if (isInCall) {
+                            Log.i("VoiceLauncher", "⚠️ Ignored voice input attempt during active call")
+                            return@setOnTouchListener true
+                        }
                         if (!isRecording) {
                             isRecording = true
                             pulse(100)
@@ -161,14 +172,87 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         }
 
         checkAndRequestPermissions()
+        registerCallStateListener()
 
         relayClient.connect()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterCallStateListener()
         relayClient.disconnect()
         pcmPlayer.stop()
+    }
+
+    private fun registerCallStateListener() {
+        telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            Log.w("VoiceLauncher", "READ_PHONE_STATE not granted, cannot register call-state listener.")
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            telephonyCallback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                override fun onCallStateChanged(state: Int) {
+                    handleCallStateChange(state)
+                }
+            }
+            telephonyManager.registerTelephonyCallback(mainExecutor, telephonyCallback!!)
+        } else {
+            phoneStateListener = object : PhoneStateListener() {
+                @Deprecated("Deprecated in Java")
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    handleCallStateChange(state)
+                }
+            }
+            telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
+        }
+    }
+
+    private fun unregisterCallStateListener() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            telephonyCallback?.let {
+                telephonyManager.unregisterTelephonyCallback(it)
+            }
+        } else {
+            phoneStateListener?.let {
+                telephonyManager.listen(it, PhoneStateListener.LISTEN_NONE)
+            }
+        }
+    }
+
+    private fun handleCallStateChange(state: Int) {
+        when (state) {
+            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                isInCall = true
+                if (isRecording) {
+                    Log.i("VoiceLauncher", "📞 Call detected — pausing voice session")
+                    isRecording = false
+                    doublePulse(200)
+                    stopVoiceCapture()
+                }
+            }
+            TelephonyManager.CALL_STATE_RINGING -> {
+                isInCall = true
+                if (isRecording) {
+                    Log.i("VoiceLauncher", "📞 Call detected — pausing voice session")
+                    isRecording = false
+                    doublePulse(200)
+                    stopVoiceCapture()
+                }
+            }
+            TelephonyManager.CALL_STATE_IDLE -> {
+                if (isInCall) {
+                    isInCall = false
+                    Log.i("VoiceLauncher", "📞 Call ended — reconnecting with fresh session")
+                    relayClient.disconnect()
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        relayClient.connect()
+                    }, 1500)
+                }
+            }
+        }
     }
 
     private fun handleRelayTextMessage(json: JSONObject) {
@@ -449,7 +533,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             Manifest.permission.CALL_PHONE,
             Manifest.permission.SEND_SMS,
             Manifest.permission.READ_CONTACTS,
-            Manifest.permission.WRITE_CONTACTS
+            Manifest.permission.WRITE_CONTACTS,
+            Manifest.permission.READ_PHONE_STATE
         )
 
         val missingPermissions = permissions.filter {
