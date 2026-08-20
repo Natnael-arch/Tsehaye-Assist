@@ -67,16 +67,22 @@ class GeminiRelayClient(private val url: String) {
         }, delayMs)
     }
 
-    fun connect() {
+    fun connect(contactNames: List<String> = emptyList()) {
         if (isConnected) {
             Log.d(TAG, "Already connected")
             return
         }
 
         Log.d(TAG, "Connecting to $url")
-        val request = Request.Builder()
-            .url(url)
-            .build()
+        val requestBuilder = Request.Builder().url(url)
+        
+        if (contactNames.isNotEmpty()) {
+            val jsonArray = org.json.JSONArray(contactNames)
+            val base64Contacts = Base64.encodeToString(jsonArray.toString().toByteArray(), Base64.NO_WRAP)
+            requestBuilder.header("X-Tsehaye-Contacts", base64Contacts)
+        }
+        
+        val request = requestBuilder.build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {

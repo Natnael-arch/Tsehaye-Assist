@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private lateinit var relayClient: GeminiRelayClient
     private lateinit var pcmPlayer: PcmPlayer
     private lateinit var gestureDetector: GestureDetectorCompat
+    private lateinit var contactProvider: ContactProvider
 
     private var pulseAnimator: AnimatorSet? = null
     private var audioBuffer = ByteArrayOutputStream()
@@ -80,6 +81,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         voiceRecorder = VoiceRecorder(this)
         pcmPlayer = PcmPlayer()
         intentDispatcher = IntentDispatcher(this)
+        contactProvider = ContactProvider(this)
 
         relayClient = GeminiRelayClient(BuildConfig.RELAY_WS_URL)
         relayClient.callback = object : GeminiRelayClient.RelayCallback {
@@ -187,7 +189,20 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         checkAndRequestPermissions()
         registerCallStateListener()
 
-        relayClient.connect()
+        relayClient.connect(getContactNamesIfPermitted())
+    }
+
+    private fun getContactNamesIfPermitted(): List<String> {
+        return if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                contactProvider.fetchContactNames()
+            } catch (e: Exception) {
+                Log.e("VoiceLauncher", "Failed to fetch contact names", e)
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
     }
 
     override fun onDestroy() {
@@ -261,7 +276,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                     Log.i("VoiceLauncher", "📞 Call ended — reconnecting with fresh session")
                     relayClient.disconnect()
                     Handler(Looper.getMainLooper()).postDelayed({
-                        relayClient.connect()
+                        relayClient.connect(getContactNamesIfPermitted())
                     }, 1500)
                 }
             }

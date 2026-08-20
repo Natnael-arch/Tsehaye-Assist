@@ -43,6 +43,10 @@ class ContactProvider(private val context: Context) {
         return contacts
     }
 
+    fun fetchContactNames(): List<String> {
+        return fetchContacts().map { it.name }.distinct()
+    }
+
     private fun normalizeName(name: String): String {
         // Lowercase and remove anything that isn't a word character or a space
         // This keeps both Amharic characters and Latin characters
