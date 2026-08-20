@@ -116,6 +116,19 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             }
         }
 
+        relayClient.onAudioDropped = {
+            runOnUiThread {
+                if (isRecording) {
+                    Log.w("VoiceLauncher", "Connection dropped mid-command, aborting recording.")
+                    isRecording = false
+                    doublePulse(200)
+                    stopVoiceCapture()
+                    statusTextView.text = "Error: Connection lost. Try again."
+                    Toast.makeText(this@MainActivity, "Connection lost mid-speech. Please try again.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
         statusTextView.text = "Connecting..."
 
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -550,6 +563,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         statusTextView.text = "Listening 👂"
         Log.d("VoiceLauncher", "startVoiceCapture() called")
 
+        relayClient.resetAudioDroppedFlag()
         voiceRecorder.startRecording()
 
         pulseRing1.visibility = View.VISIBLE

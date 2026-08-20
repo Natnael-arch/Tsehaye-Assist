@@ -40,6 +40,13 @@ class GeminiRelayClient(private val url: String) {
     }
 
     var callback: RelayCallback? = null
+    
+    var onAudioDropped: (() -> Unit)? = null
+    private var audioDroppedSignaled = false
+
+    fun resetAudioDroppedFlag() {
+        audioDroppedSignaled = false
+    }
 
     private fun scheduleReconnect() {
         if (!shouldReconnect) return
@@ -74,6 +81,7 @@ class GeminiRelayClient(private val url: String) {
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempts = 0
+                audioDroppedSignaled = false
                 Log.d(TAG, "Connected to relay server")
                 isConnected = true
                 callback?.onConnected()
@@ -126,6 +134,10 @@ class GeminiRelayClient(private val url: String) {
     fun sendAudio(pcmData: ByteArray) {
         if (!isConnected) {
             Log.w(TAG, "Cannot send audio: not connected")
+            if (!audioDroppedSignaled) {
+                audioDroppedSignaled = true
+                onAudioDropped?.invoke()
+            }
             return
         }
         val b64 = Base64.encodeToString(pcmData, Base64.NO_WRAP)
@@ -142,6 +154,10 @@ class GeminiRelayClient(private val url: String) {
         val sent = webSocket?.send(msg.toString()) ?: false
         if (!sent) {
             Log.w(TAG, "Failed to send audio frame")
+            if (!audioDroppedSignaled) {
+                audioDroppedSignaled = true
+                onAudioDropped?.invoke()
+            }
         }
     }
 

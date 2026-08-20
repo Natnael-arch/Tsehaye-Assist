@@ -19,7 +19,7 @@ class VoiceRecorder(private val cacheDir: File) {
     private val SAMPLE_RATE = 16000
     private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
     private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-    private val BUFFER_SIZE = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+    private val BUFFER_SIZE = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 4
 
     private var audioRecord: AudioRecord? = null
     private var isRecording = false
