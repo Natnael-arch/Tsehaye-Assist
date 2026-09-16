@@ -193,6 +193,34 @@ class GeminiRelayClient(private val url: String) {
         sendMessage(msg)
     }
 
+    fun sendActivityStart() {
+        if (!isConnected) {
+            Log.w(TAG, "Cannot send activityStart: not connected")
+            return
+        }
+        val msg = JSONObject().apply {
+            put("realtimeInput", JSONObject().apply {
+                put("activityStart", JSONObject())
+            })
+        }
+        sendMessage(msg)
+        Log.d(TAG, "Sent activityStart signal")
+    }
+
+    fun sendActivityEnd() {
+        if (!isConnected) {
+            Log.w(TAG, "Cannot send activityEnd: not connected")
+            return
+        }
+        val msg = JSONObject().apply {
+            put("realtimeInput", JSONObject().apply {
+                put("activityEnd", JSONObject())
+            })
+        }
+        sendMessage(msg)
+        Log.d(TAG, "Sent activityEnd signal")
+    }
+
     fun disconnect() {
         shouldReconnect = false
         reconnectHandler.removeCallbacksAndMessages(null)

@@ -575,6 +575,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     }
 
     private fun startVoiceCapture() {
+        relayClient.sendActivityStart()
         statusTextView.text = "Listening 👂"
         Log.d("VoiceLauncher", "startVoiceCapture() called")
 
@@ -631,6 +632,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         waveformView.reset()
 
         if (relayClient.isConnected()) {
+            relayClient.sendActivityEnd()
             relayClient.sendEndOfAudio()
             statusTextView.text = "Processing..."
         } else {
