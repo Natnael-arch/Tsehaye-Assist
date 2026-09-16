@@ -76,6 +76,16 @@ class IntentDispatcher(private val context: Context) {
             "search_contacts" -> handleSearchContacts(callId, args, toolCallback)
             "add_new_contact" -> handleAddNewContact(callId, args, toolCallback)
             "send_text_message" -> handleSendTextMessage(callId, args, toolCallback)
+            "confirm_pending_action" -> {
+                Log.i("IntentDispatcher", "✅ Gemini called confirm_pending_action")
+                confirmPendingLocal(toolCallback)
+                toolCallback.sendToolResponse(callId, "confirm_pending_action", mapOf("result" to "OK"))
+            }
+            "cancel_pending_action" -> {
+                Log.i("IntentDispatcher", "🚫 Gemini called cancel_pending_action")
+                cancelPendingLocal(toolCallback)
+                toolCallback.sendToolResponse(callId, "cancel_pending_action", mapOf("result" to "OK"))
+            }
             else -> {
                 Log.w("IntentDispatcher", "⚠️ Unknown function: $functionName — sending empty response")
                 toolCallback.sendToolResponse(callId, functionName, mapOf("result" to "UNKNOWN_FUNCTION"))
