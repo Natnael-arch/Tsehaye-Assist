@@ -13,6 +13,7 @@ class PcmPlayer {
     private var isPlaying = false
 
     fun playPcm(inputStream: InputStream, sampleRate: Int = 24000, onCompletion: (() -> Unit)? = null) {
+        stop()
         try {
             val data = inputStream.readBytes()
             inputStream.close()

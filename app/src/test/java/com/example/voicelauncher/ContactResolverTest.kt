@@ -10,6 +10,7 @@ class ContactResolverTest {
         Contact("Abebe", "0911000001", "abebe"),
         Contact("አበበ", "0911000002", "አበበ"),
         Contact("Abebe Kebede", "0911000003", "abebe kebede"),
+        Contact("አበበ ከበደ", "0911000009", "አበበ ከበደ"),
         Contact("አበበ በቀለ", "0911000004", "አበበ በቀለ"),
         Contact("Dawit Haile", "0911000005", "dawit haile"),
         Contact("ዳዊት ኃይሌ", "0911000006", "ዳዊት ኃይሌ"),
@@ -31,21 +32,23 @@ class ContactResolverTest {
     @Test
     fun testContactResolver() {
         val testCases = listOf(
-            // Exact match, Latin script only
-            TestCase("Abebe", sampleContacts, MatchResult.ExactMatch::class.java, "Abebe"),
+            // Single candidate exact match
+            TestCase("Abebe", listOf(Contact("Abebe", "0911000001", "abebe")), MatchResult.ExactMatch::class.java, "Abebe"),
+            // Multiple contacts sharing 'Abebe' token -> DisambiguationRequired
+            TestCase("Abebe", sampleContacts, MatchResult.DisambiguationRequired::class.java),
             // Exact match, Amharic script only
-            TestCase("አበበ", sampleContacts, MatchResult.ExactMatch::class.java, "አበበ"),
-            // Dual-script query matching Latin
-            TestCase("አበበ ከበደ, Abebe Kebede", sampleContacts, MatchResult.ExactMatch::class.java, "Abebe Kebede"),
-            // Dual-script query matching Amharic
+            TestCase("አበበ", listOf(Contact("አበበ", "0911000002", "አበበ")), MatchResult.ExactMatch::class.java, "አበበ"),
+            // Dual-script query matching Amharic full name uniquely
+            TestCase("አበበ ከበደ, Abebe Kebede", sampleContacts, MatchResult.ExactMatch::class.java, "አበበ ከበደ"),
+            // Dual-script query matching Amharic full name uniquely
             TestCase("አበበ በቀለ, Abebe Bekele", sampleContacts, MatchResult.ExactMatch::class.java, "አበበ በቀለ"),
-            // Dual-script query with slash
+            // Dual-script query with slash matching full name uniquely
             TestCase("ዳዊት ኃይሌ / Dawit Haile", sampleContacts, MatchResult.ExactMatch::class.java, "ዳዊት ኃይሌ"),
             // Near-miss / fuzzy spelling short name -> triggers Disambiguation because score is 0.8
             TestCase("Heln", sampleContacts, MatchResult.DisambiguationRequired::class.java),
-            // Near-miss / fuzzy spelling long name -> triggers ExactMatch because score is 0.9
-            TestCase("Alexandrs", sampleContacts, MatchResult.ExactMatch::class.java, "Alexandros"),
-            // Disambiguation Required - two similar names with score 0.8 ("Alexandr" vs "Alexandros" / "Alexandra")
+            // Near-miss / fuzzy spelling long name -> triggers ExactMatch when unique
+            TestCase("Alexandrs", listOf(Contact("Alexandros", "0911000013", "alexandros")), MatchResult.ExactMatch::class.java, "Alexandros"),
+            // Disambiguation Required - two similar names ("Alexandr" vs "Alexandros" / "Alexandra")
             TestCase("Alexandr", sampleContacts, MatchResult.DisambiguationRequired::class.java),
             // No Match
             TestCase("XYZ", sampleContacts, MatchResult.NoMatch::class.java),

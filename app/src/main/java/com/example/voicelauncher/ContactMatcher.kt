@@ -13,14 +13,16 @@ sealed class MatchResult {
 class ContactMatcher {
 
     /**
-     * Finds the best matching contacts using Levenshtein distance.
+     * Finds the best matching contacts using token-set scoring and Levenshtein distance.
      */
     fun findBestMatches(targetName: String, contacts: List<Contact>): MatchResult {
         if (targetName.isBlank()) return MatchResult.NoMatch
 
         val normalizedTarget = targetName.lowercase().trim()
+        val queryTokens = normalizedTarget.split(" ").filter { it.isNotBlank() }
         val scores = contacts.map { contact ->
-            val score = calculateSimilarity(normalizedTarget, contact.normalizedName)
+            val contactTokens = contact.normalizedName.split(" ").filter { it.isNotBlank() }
+            val score = tokenSetScore(queryTokens, contactTokens)
             Pair(contact, score)
         }.sortedByDescending { it.second }
 
@@ -44,14 +46,15 @@ class ContactMatcher {
         }
 
         val bestScore = scores[0].second
-        Log.w("ContactMatcher", "║  bestScore=%.4f threshold_exact=0.9 threshold_disambig=0.6".format(bestScore))
+        val tiedAtBest = scores.count { it.second >= bestScore - 0.001 }
+        Log.w("ContactMatcher", "║  bestScore=%.4f tiedAtBest=$tiedAtBest threshold_exact=0.9 threshold_disambig=0.6".format(bestScore))
 
         return when {
-            bestScore >= 0.9 -> {
+            bestScore >= 0.9 && tiedAtBest == 1 -> {
                 Log.w("ContactMatcher", "╚══ RESULT: ExactMatch → '${scores[0].first.name}' (score=%.4f) ══".format(bestScore))
                 MatchResult.ExactMatch(scores[0].first)
             }
-            bestScore >= 0.6 -> {
+            bestScore >= 0.6 || (bestScore >= 0.9 && tiedAtBest > 1) -> {
                 // Return up to top 3 candidates that are reasonably close to the best score
                 val candidates = scores.take(3)
                     .filter { it.second >= 0.6 && it.second >= (bestScore * 0.8) }
@@ -69,6 +72,14 @@ class ContactMatcher {
                 MatchResult.NoMatch
             }
         }
+    }
+
+    private fun tokenSetScore(queryTokens: List<String>, contactTokens: List<String>): Double {
+        if (queryTokens.isEmpty() || contactTokens.isEmpty()) return 0.0
+        val perTokenBest = queryTokens.map { qt ->
+            contactTokens.maxOf { ct -> calculateSimilarity(qt, ct) }
+        }
+        return perTokenBest.average()
     }
 
     /**
