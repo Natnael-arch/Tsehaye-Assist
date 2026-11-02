@@ -21,7 +21,8 @@ android {
         if (localPropertiesFile.exists()) {
             localProperties.load(new FileInputStream(localPropertiesFile))
         }
-        buildConfigField "String", "RELAY_WS_URL", "\"wss://tsehayeassistrelayserver-production.up.railway.app/relay\""
+        def relayWsUrl = localProperties.getProperty('relay.ws.url', 'wss://tsehayeassistrelayserver-production.up.railway.app/relay')
+        buildConfigField "String", "RELAY_WS_URL", "\"${relayWsUrl}\""
     }
 
     buildFeatures {

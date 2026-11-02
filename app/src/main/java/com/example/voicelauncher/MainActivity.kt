@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private lateinit var voiceRecorder: VoiceRecorder
     private lateinit var intentDispatcher: IntentDispatcher
     private lateinit var relayClient: GeminiRelayClient
+    private var audioPlaybackCounter = 0
     private lateinit var pcmPlayer: PcmPlayer
     private lateinit var gestureDetector: GestureDetectorCompat
     private lateinit var contactProvider: ContactProvider
@@ -45,6 +46,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private var pulseAnimator: AnimatorSet? = null
     private var audioBuffer = ByteArrayOutputStream()
     private var audioResponseSampleRate = 24000
+    private var turnIndex = 0
+    private val currentTurnToolCalls = mutableListOf<String>()
     private var isRecording = false
     private var isInCall: Boolean = false
     private var phoneStateListener: PhoneStateListener? = null
@@ -57,11 +60,21 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         permissions.entries.forEach {
             Log.d("VoiceLauncher", "${it.key} = ${it.value}")
         }
+        if (permissions[Manifest.permission.READ_CONTACTS] == true &&
+            ::relayClient.isInitialized &&
+            relayClient.isConnected() &&
+            !relayClient.hasContacts()
+        ) {
+            Log.d("VoiceLauncher", "READ_CONTACTS granted — reconnecting with contacts")
+            relayClient.disconnect()
+            relayClient.connect(getContactNamesIfPermitted())
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.i("VoiceLauncher", "[APP] onCreate instance=${this.hashCode()}")
         setContentView(R.layout.activity_main)
 
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -349,7 +362,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                 }
                 val turnComplete = content.optBoolean("turnComplete", false)
                 if (turnComplete) {
-                    Log.d("VoiceLauncher", "Turn complete, buffer=${audioBuffer.size()} bytes")
+                    Log.d("VoiceLauncher", "TURN complete turnIndex=$turnIndex bytes=${audioBuffer.size()} toolCalls=${currentTurnToolCalls.joinToString(",")} t=${System.currentTimeMillis()}")
                     if (awaitingId != null) {
                         Log.w("VoiceLauncher", "⚠️ TURN COMPLETE while still awaiting confirmation — Gemini neither confirmed, cancelled, nor called any tool")
                         awaitingConfirmationCallId_checkCleared()
@@ -359,6 +372,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                     } else {
                         runOnUiThread { statusTextView.text = "Ready 👂" }
                     }
+                    turnIndex++
+                    currentTurnToolCalls.clear()
                 }
                 val generationComplete = content.optBoolean("generationComplete", false)
                 if (generationComplete) {
@@ -368,7 +383,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                 if (interrupted) {
                     Log.d("VoiceLauncher", "Model turn interrupted")
                     audioBuffer.reset()
-                    pcmPlayer.stop()
+                    pcmPlayer.stop("interrupted")
                 }
             }
             json.has("toolCall") -> {
@@ -426,6 +441,12 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     }
 
     private fun dispatchToolCall(callId: String, name: String, args: JSONObject) {
+        val discardedAudioBytes = audioBuffer.size()
+        audioBuffer.reset()
+        pcmPlayer.stop("interrupted")
+        Log.d("VoiceLauncher", "TOOLCALL discard audioBuffer=$discardedAudioBytes bytes turn=$turnIndex name=$name")
+        currentTurnToolCalls.add(name)
+        Log.d("VoiceLauncher", "TOOLCALL turn=$turnIndex name=$name callId=$callId t=${System.currentTimeMillis()}")
         val argsMap = mutableMapOf<String, Any>()
         for (key in args.keys()) {
             argsMap[key] = args.get(key) ?: ""
@@ -434,8 +455,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     }
 
     private fun playAccumulatedAudio() {
+        val turn = turnIndex
         val data = audioBuffer.toByteArray()
         audioBuffer.reset()
+        Log.i("VoiceLauncher", "PLAY start turn=$turn bytes=${data.size} t=${System.currentTimeMillis()}")
         Log.d("VoiceLauncher", "Playing accumulated ${data.size} bytes at ${audioResponseSampleRate}Hz")
         try {
             val tempFile = File.createTempFile("relay_audio", ".pcm", cacheDir)
@@ -443,7 +466,11 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             tempFile.writeBytes(data)
             runOnUiThread {
                 statusTextView.text = "Speaking..."
+                audioPlaybackCounter++
+                Log.i("VoiceLauncher", "[APP] AUDIO PLAYBACK START counter=${audioPlaybackCounter} instance=${this@MainActivity.hashCode()}")
+                pcmPlayer.turnId = turn
                 pcmPlayer.playPcm(tempFile.inputStream(), audioResponseSampleRate) {
+                    Log.i("VoiceLauncher", "PLAY end turn=$turn t=${System.currentTimeMillis()} reason=completed")
                     Log.d("VoiceLauncher", "Audio playback finished")
                     runOnUiThread {
                         if (intentDispatcher.isAwaitingConfirmation) {
@@ -633,7 +660,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
 
         if (relayClient.isConnected()) {
             relayClient.sendActivityEnd()
-            relayClient.sendEndOfAudio()
+            // No clientContent turnComplete here: Gemini treats it as a second end-of-turn and answers twice.
             statusTextView.text = "Processing..."
         } else {
             Log.w("VoiceLauncher", "Relay not connected — cannot process voice")

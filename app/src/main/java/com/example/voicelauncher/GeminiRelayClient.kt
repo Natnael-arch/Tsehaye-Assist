@@ -31,6 +31,9 @@ class GeminiRelayClient(private val url: String) {
     private var reconnectAttempts = 0
     private val reconnectHandler = Handler(Looper.getMainLooper())
     private var shouldReconnect = true
+    private var lastContactNames: List<String> = emptyList()
+    private var nextConnectionId = 0
+    private var liveSockets = 0
 
     interface RelayCallback {
         fun onConnected()
@@ -76,21 +79,39 @@ class GeminiRelayClient(private val url: String) {
         }
 
         Log.d(TAG, "Connecting to $url")
-        val requestBuilder = Request.Builder().url(url)
-        
+        val connectionId = ++nextConnectionId
+        Log.d(TAG, "CONNECT id=$connectionId t=${System.currentTimeMillis()}")
         if (contactNames.isNotEmpty()) {
-            val jsonArray = org.json.JSONArray(contactNames)
-            val base64Contacts = Base64.encodeToString(jsonArray.toString().toByteArray(), Base64.NO_WRAP)
+            lastContactNames = contactNames
+        }
+        val namesUsed = if (contactNames.isNotEmpty()) contactNames else lastContactNames
+        val requestBuilder = Request.Builder().url(url)
+        val base64Contacts = if (namesUsed.isNotEmpty()) {
+            val jsonArray = org.json.JSONArray(namesUsed)
+            Base64.encodeToString(jsonArray.toString().toByteArray(), Base64.NO_WRAP)
+        } else {
+            ""
+        }
+        if (base64Contacts.isNotEmpty()) {
             requestBuilder.header("X-Tsehaye-Contacts", base64Contacts)
         }
-        
+        Log.d(TAG, "Connecting with ${namesUsed.size} contacts, header chars=${base64Contacts.length}")
+
         val request = requestBuilder.build()
 
+        shouldReconnect = true
         isConnecting = true
+        var opened = false
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempts = 0
                 audioDroppedSignaled = false
+                opened = true
+                liveSockets++
+                Log.d(TAG, "OPEN id=$connectionId liveSockets=$liveSockets t=${System.currentTimeMillis()}")
+                if (liveSockets > 1) {
+                    Log.e(TAG, "⚠️⚠️ MORE THAN ONE LIVE RELAY SOCKET liveSockets=$liveSockets id=$connectionId")
+                }
                 Log.d(TAG, "Connected to relay server")
                 isConnecting = false
                 isConnected = true
@@ -126,7 +147,10 @@ class GeminiRelayClient(private val url: String) {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "Closed: code=$code reason=$reason")
+                Log.d(TAG, "CLOSED id=$connectionId code=$code reason=$reason liveSockets=$liveSockets t=${System.currentTimeMillis()}")
+                if (opened) {
+                    liveSockets = (liveSockets - 1).coerceAtLeast(0)
+                }
                 isConnecting = false
                 isConnected = false
                 callback?.onDisconnected(reason)
@@ -134,7 +158,10 @@ class GeminiRelayClient(private val url: String) {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket failure: ${t.message}", t)
+                Log.e(TAG, "FAILURE id=$connectionId msg=${t.message} liveSockets=$liveSockets t=${System.currentTimeMillis()}")
+                if (opened) {
+                    liveSockets = (liveSockets - 1).coerceAtLeast(0)
+                }
                 isConnecting = false
                 isConnected = false
                 callback?.onFailure(t.message ?: "Unknown WebSocket error")
@@ -237,4 +264,6 @@ class GeminiRelayClient(private val url: String) {
     }
 
     fun isConnected(): Boolean = isConnected
+
+    fun hasContacts(): Boolean = lastContactNames.isNotEmpty()
 }
