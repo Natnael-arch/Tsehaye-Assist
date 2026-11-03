@@ -28,6 +28,10 @@ import android.telephony.TelephonyManager
 
 class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
 
+    private companion object {
+        const val HOLD_GATE_MS = 300L
+    }
+
     private lateinit var statusTextView: TextView
     private lateinit var touchArea: FrameLayout
     private lateinit var vibrator: Vibrator
@@ -49,6 +53,13 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private var turnIndex = 0
     private val currentTurnToolCalls = mutableListOf<String>()
     private var isRecording = false
+
+    // ── Hold gate: a press shorter than this must never reach the model ──
+    private val captureHandler = Handler(Looper.getMainLooper())
+    private val preRollLock = Any()
+    private val preRollChunks = mutableListOf<ByteArray>()
+    @Volatile private var holdGateOpen = false
+    private val openHoldGate = Runnable { openHoldGate() }
     private var isInCall: Boolean = false
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: TelephonyCallback? = null
@@ -189,8 +200,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         if (isRecording) {
                             isRecording = false
-                            doublePulse(200)
-                            stopVoiceCapture()
+                            // A rejected short press already pulsed; the release pulse would contradict it
+                            if (stopVoiceCapture()) doublePulse(200)
                         }
                         true
                     }
@@ -602,12 +613,14 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     }
 
     private fun startVoiceCapture() {
-        relayClient.sendActivityStart()
+        holdGateOpen = false
+        synchronized(preRollLock) { preRollChunks.clear() }
         statusTextView.text = "Listening 👂"
-        Log.d("VoiceLauncher", "startVoiceCapture() called")
+        Log.d("VoiceLauncher", "startVoiceCapture() called (hold gate ${HOLD_GATE_MS}ms)")
 
         relayClient.resetAudioDroppedFlag()
         voiceRecorder.startRecording()
+        captureHandler.postDelayed(openHoldGate, HOLD_GATE_MS)
 
         pulseRing1.visibility = View.VISIBLE
         pulseRing2.visibility = View.VISIBLE
@@ -638,15 +651,40 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         }
 
         voiceRecorder.onAudioDataListener = { data, read ->
-            if (relayClient.isConnected()) {
-                val audioChunk = data.copyOf(read)
-                relayClient.sendAudio(audioChunk)
+            val chunk = data.copyOf(read)
+            val buffered: Boolean
+            synchronized(preRollLock) {
+                buffered = !holdGateOpen
+                if (buffered) preRollChunks.add(chunk)
+            }
+            if (!buffered && relayClient.isConnected()) {
+                relayClient.sendAudio(chunk)
             }
         }
     }
 
-    private fun stopVoiceCapture() {
+    /** The press reached the hold time: tell the model the turn started, then release the pre-roll. */
+    private fun openHoldGate() {
+        val pending: List<ByteArray>
+        synchronized(preRollLock) {
+            if (holdGateOpen) return
+            holdGateOpen = true
+            pending = preRollChunks.toList()
+            preRollChunks.clear()
+        }
+        Log.d("VoiceLauncher", "[HOLD-GATE] open: activityStart + ${pending.size} pre-roll chunk(s)")
+        relayClient.sendActivityStart()
+        if (relayClient.isConnected()) {
+            pending.forEach { relayClient.sendAudio(it) }
+        }
+    }
+
+    /** @return false when the press was too short to reach the relay. */
+    private fun stopVoiceCapture(): Boolean {
         Log.d("VoiceLauncher", "stopVoiceCapture() called")
+
+        captureHandler.removeCallbacks(openHoldGate)
+        val heldLongEnough = holdGateOpen
 
         voiceRecorder.stopRecording()
 
@@ -658,6 +696,19 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         pulseRing2.visibility = View.GONE
         waveformView.reset()
 
+        val discarded: Int
+        synchronized(preRollLock) {
+            discarded = preRollChunks.size
+            preRollChunks.clear()
+        }
+
+        if (!heldLongEnough) {
+            Log.d("VoiceLauncher", "[HOLD-GATE] too short: sent nothing, discarded $discarded pre-roll chunk(s)")
+            vibratePattern(longArrayOf(0, 30))
+            statusTextView.text = "Ready 👂"
+            return false
+        }
+
         if (relayClient.isConnected()) {
             relayClient.sendActivityEnd()
             // No clientContent turnComplete here: Gemini treats it as a second end-of-turn and answers twice.
@@ -666,5 +717,6 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             Log.w("VoiceLauncher", "Relay not connected — cannot process voice")
             statusTextView.text = "Offline"
         }
+        return true
     }
 }

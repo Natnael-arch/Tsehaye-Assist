@@ -44,8 +44,9 @@ class ContactResolverTest {
             TestCase("አበበ በቀለ, Abebe Bekele", sampleContacts, MatchResult.ExactMatch::class.java, "አበበ በቀለ"),
             // Dual-script query with slash matching full name uniquely
             TestCase("ዳዊት ኃይሌ / Dawit Haile", sampleContacts, MatchResult.ExactMatch::class.java, "ዳዊት ኃይሌ"),
-            // Near-miss / fuzzy spelling short name -> triggers Disambiguation because score is 0.8
-            TestCase("Heln", sampleContacts, MatchResult.DisambiguationRequired::class.java),
+            // Near-miss / fuzzy spelling short name -> only one candidate survives scoring, which is
+            // a confirmation ("did you mean Helen?"), not an ambiguity menu of one
+            TestCase("Heln", sampleContacts, MatchResult.ExactMatch::class.java, "Helen"),
             // Near-miss / fuzzy spelling long name -> triggers ExactMatch when unique
             TestCase("Alexandrs", listOf(Contact("Alexandros", "0911000013", "alexandros")), MatchResult.ExactMatch::class.java, "Alexandros"),
             // Disambiguation Required - two similar names ("Alexandr" vs "Alexandros" / "Alexandra")

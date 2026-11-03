@@ -15,9 +15,23 @@ object ContactResolver {
 
     data class ResolvedContact(val match: MatchResult, val path: String)
 
-    fun resolve(rawName: String, contacts: List<Contact>): ResolvedContact {
+    fun resolve(rawName: String, contacts: List<Contact>, lastCandidates: List<Contact>? = null): ResolvedContact {
         Log.w("ContactResolver", "┌── resolveContactFromDualScriptQuery ──")
         Log.w("ContactResolver", "│  rawName='$rawName'")
+
+        val answer = EndingAnswer.parse(rawName)
+        if (answer != null) {
+            Log.w("ContactResolver", "│  SPOKEN ANSWER name='${answer.name}' ending='${answer.digits}'")
+            val match = contactMatcher.findBestMatches(answer, contacts, rawName)
+            return ResolvedContact(match, "answer:${answer.name}:${answer.digits}")
+        }
+
+        val digits = EndingAnswer.bareDigits(rawName)
+        if (digits != null && !lastCandidates.isNullOrEmpty()) {
+            Log.w("ContactResolver", "│  BARE NUMBER ANSWER '$digits' against ${lastCandidates.size} offered candidates")
+            val match = contactMatcher.matchByNumberEnding(lastCandidates, digits)
+            return ResolvedContact(match, "answer:number:$digits")
+        }
 
         var parts = rawName.split(Regex("[,|/]")).map { it.trim() }.filter { it.isNotEmpty() }
         Log.w("ContactResolver", "│  split by [,|/] → parts=$parts")
@@ -41,7 +55,7 @@ object ContactResolver {
 
         if (amharicQuery.isNotBlank()) {
             Log.w("ContactResolver", "│  ATTEMPTING amharic path with query='$amharicQuery'")
-            val match = contactMatcher.findBestMatches(amharicQuery, contacts)
+            val match = contactMatcher.findBestMatches(amharicQuery, contacts, rawName)
             if (match !is MatchResult.NoMatch) {
                 Log.w("ContactResolver", "└── RESOLVED via amharic path")
                 return ResolvedContact(match, "amharic:$amharicQuery")
@@ -51,7 +65,7 @@ object ContactResolver {
 
         if (!latinQuery.isNullOrBlank()) {
             Log.w("ContactResolver", "│  ATTEMPTING latin path with query='$latinQuery'")
-            val match = contactMatcher.findBestMatches(latinQuery, contacts)
+            val match = contactMatcher.findBestMatches(latinQuery, contacts, rawName)
             if (match !is MatchResult.NoMatch) {
                 Log.w("ContactResolver", "└── RESOLVED via latin path")
                 return ResolvedContact(match, "latin:$latinQuery")

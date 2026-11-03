@@ -51,6 +51,7 @@ class IntentDispatcher(private val context: Context) {
     // ── DIAGNOSTIC: Track search_contacts call sequence ──
     private var searchCallCounter = 0
     private var lastDisambiguationNames: List<String>? = null
+    private var lastDisambiguationCandidates: List<Contact>? = null
     private var lastSearchRawName: String? = null
 
     interface ToolCallback {
@@ -147,12 +148,13 @@ class IntentDispatcher(private val context: Context) {
 
         mainScope.launch {
             val contacts = withContext(Dispatchers.IO) { contactProvider.fetchContacts() }
-            val resolved = ContactResolver.resolve(rawName, contacts)
+            val resolved = ContactResolver.resolve(rawName, contacts, lastDisambiguationCandidates)
             Log.d("IntentDispatcher", "search_contacts path: ${resolved.path}")
 
             when (resolved.match) {
                 is MatchResult.ExactMatch -> {
                     lastDisambiguationNames = null  // clear disambiguation state
+                    lastDisambiguationCandidates = null
                     toolCallback.vibrate()
                     pendingAction = PendingAction.Call(
                         resolved.match.contact.name,
@@ -176,14 +178,16 @@ class IntentDispatcher(private val context: Context) {
                     toolCallback.sendToolResponse(callId, "search_contacts", pendingResultMap)
                 }
                 is MatchResult.DisambiguationRequired -> {
-                    val names = resolved.match.candidates.map { it.name }
+                    val names = resolved.match.labels
                     lastDisambiguationNames = names  // track what was offered
+                    lastDisambiguationCandidates = resolved.match.candidates
                     Log.w("IntentDispatcher", "⚠️ DISAMBIGUATION: offering candidates $names for rawName='$rawName'")
                     toolCallback.vibrate()
                     toolCallback.sendAmbiguity(callId, names)
                 }
                 is MatchResult.NoMatch -> {
                     lastDisambiguationNames = null
+                    lastDisambiguationCandidates = null
                     toolCallback.sendToolResponse(callId, "search_contacts", mapOf(
                         "result" to "NOT_FOUND",
                         "query" to resolved.path
@@ -334,7 +338,7 @@ class IntentDispatcher(private val context: Context) {
                     toolCallback.sendToolResponse(callId, "send_text_message", pendingSmsResultMap)
                 }
                 is MatchResult.DisambiguationRequired -> {
-                    val names = resolved.match.candidates.map { it.name }
+                    val names = resolved.match.labels
                     toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
                         "result" to "AMBIGUITY",
                         "matches" to names
