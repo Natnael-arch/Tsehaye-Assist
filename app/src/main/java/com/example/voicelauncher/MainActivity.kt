@@ -161,8 +161,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (intentDispatcher.isAwaitingConfirmation) {
                     vibrateConfirm()
-                    intentDispatcher.confirmPendingLocal(this@MainActivity)
-                    runOnUiThread { statusTextView.text = "Confirmed" }
+                    val acted = intentDispatcher.confirmPendingLocal(this@MainActivity)
+                    runOnUiThread { statusTextView.text = if (acted) "Confirmed" else "Nothing pending" }
                     return true
                 }
                 return false
@@ -171,8 +171,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (intentDispatcher.isAwaitingConfirmation) {
                     vibrateReject()
-                    intentDispatcher.cancelPendingLocal(this@MainActivity)
-                    runOnUiThread { statusTextView.text = "Cancelled" }
+                    val acted = intentDispatcher.cancelPendingLocal(this@MainActivity)
+                    runOnUiThread { statusTextView.text = if (acted) "Cancelled" else "Nothing pending" }
                     return true
                 }
                 return false

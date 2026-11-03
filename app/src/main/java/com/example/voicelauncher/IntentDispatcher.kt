@@ -16,8 +16,10 @@ import android.provider.ContactsContract.Data
 import android.telephony.SmsManager
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.util.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 
 
@@ -79,13 +81,17 @@ class IntentDispatcher(private val context: Context) {
             "send_text_message" -> handleSendTextMessage(callId, args, toolCallback)
             "confirm_pending_action" -> {
                 Log.i("IntentDispatcher", "✅ Gemini called confirm_pending_action")
-                confirmPendingLocal(toolCallback)
-                toolCallback.sendToolResponse(callId, "confirm_pending_action", mapOf("result" to "OK"))
+                val acted = confirmPendingLocal(toolCallback)
+                toolCallback.sendToolResponse(callId, "confirm_pending_action", mapOf(
+                    "result" to pendingActionResult(acted)
+                ))
             }
             "cancel_pending_action" -> {
                 Log.i("IntentDispatcher", "🚫 Gemini called cancel_pending_action")
-                cancelPendingLocal(toolCallback)
-                toolCallback.sendToolResponse(callId, "cancel_pending_action", mapOf("result" to "OK"))
+                val acted = cancelPendingLocal(toolCallback)
+                toolCallback.sendToolResponse(callId, "cancel_pending_action", mapOf(
+                    "result" to pendingActionResult(acted)
+                ))
             }
             else -> {
                 Log.w("IntentDispatcher", "⚠️ Unknown function: $functionName — sending empty response")
@@ -354,7 +360,8 @@ class IntentDispatcher(private val context: Context) {
         }
     }
 
-    fun confirmPendingLocal(toolCallback: ToolCallback) {
+    /** @return false when there was nothing to act on, or the pending action had already expired. */
+    fun confirmPendingLocal(toolCallback: ToolCallback): Boolean {
         Log.i("IntentDispatcher", "━━━ CONFIRM PENDING ACTION (LOCAL) ━━━")
         Log.i("IntentDispatcher", "previousAwaitingCallId=$awaitingConfirmationCallId")
         Log.i("IntentDispatcher", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -362,13 +369,13 @@ class IntentDispatcher(private val context: Context) {
         val action = pendingAction
         if (action == null) {
             Log.w("IntentDispatcher", "⚠️ Local confirm but nothing pending")
-            return
+            return false
         }
         val ageMs = System.currentTimeMillis() - action.createdAt
         if (ageMs > PENDING_ACTION_TTL_MS) {
             Log.w("IntentDispatcher", "⚠️ Pending action expired (${ageMs}ms old) — clearing")
             pendingAction = null
-            return
+            return false
         }
         pendingAction = null
         when (action) {
@@ -382,9 +389,11 @@ class IntentDispatcher(private val context: Context) {
                 executeSms(action.number, action.messageBody, "local_confirm", action.contactName, toolCallback)
             }
         }
+        return true
     }
 
-    fun cancelPendingLocal(toolCallback: ToolCallback) {
+    /** @return false when a cancel arrived but no action was pending. */
+    fun cancelPendingLocal(toolCallback: ToolCallback): Boolean {
         Log.i("IntentDispatcher", "━━━ CANCEL PENDING ACTION (LOCAL) ━━━")
         Log.i("IntentDispatcher", "previousAwaitingCallId=$awaitingConfirmationCallId")
         Log.i("IntentDispatcher", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -393,9 +402,10 @@ class IntentDispatcher(private val context: Context) {
         pendingAction = null
         if (action != null) {
             Log.i("IntentDispatcher", "🚫 Pending action cancelled locally by user")
-        } else {
-            Log.w("IntentDispatcher", "⚠️ Local cancel but nothing pending")
+            return true
         }
+        Log.w("IntentDispatcher", "⚠️ Local cancel but nothing pending")
+        return false
     }
 
     private fun executeCall(contactName: String, phoneNumber: String) {
@@ -422,17 +432,41 @@ class IntentDispatcher(private val context: Context) {
         toolCallback: ToolCallback
     ) {
         mainScope.launch {
+            var sentReceiver: BroadcastReceiver? = null
+            var deliveredReceiver: BroadcastReceiver? = null
+
+            fun unregisterWhich(receiver: BroadcastReceiver?) {
+                receiver ?: return
+                runCatching { context.unregisterReceiver(receiver) }
+                    .onFailure { Log.w("IntentDispatcher", "SMS receiver unregister failed: ${it.message}") }
+            }
+
             try {
                 val smsManager = SmsManager.getDefault()
                 val parts = smsManager.divideMessage(messageBody)
-                val sentIntents = ArrayList<PendingIntent>()
-                val deliveredIntents = ArrayList<PendingIntent>()
                 val uuid = UUID.randomUUID().toString()
                 val sentAction = "SMS_SENT_$uuid"
                 val deliveredAction = "SMS_DELIVERED_$uuid"
+                val sentSettled = AtomicBoolean(false)
+                val deliveredSettled = AtomicBoolean(false)
 
-                val sentReceiver = object : BroadcastReceiver() {
+                val sentPI = PendingIntent.getBroadcast(
+                    context,
+                    uuid.hashCode(),
+                    Intent(sentAction).setPackage(context.packageName),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val deliveredPI = PendingIntent.getBroadcast(
+                    context,
+                    uuid.hashCode() + 1,
+                    Intent(deliveredAction).setPackage(context.packageName),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                sentReceiver = object : BroadcastReceiver() {
                     override fun onReceive(ctx: Context, intent: Intent) {
+                        if (!sentSettled.compareAndSet(false, true)) return
+                        unregisterWhich(this)
                         if (resultCode == Activity.RESULT_OK) {
                             Log.d("IntentDispatcher", "SMS sent successfully")
                             toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
@@ -447,20 +481,27 @@ class IntentDispatcher(private val context: Context) {
                     }
                 }
 
-                val deliveredReceiver = object : BroadcastReceiver() {
+                deliveredReceiver = object : BroadcastReceiver() {
                     override fun onReceive(ctx: Context, intent: Intent) {
-                        Log.d("IntentDispatcher", "SMS delivered to $number")
+                        if (!deliveredSettled.compareAndSet(false, true)) return
+                        unregisterWhich(this)
+                        if (resultCode == Activity.RESULT_OK) {
+                            Log.d("IntentDispatcher", "SMS delivered to $number")
+                        } else {
+                            Log.d("IntentDispatcher", "SMS not delivered to $number, resultCode=$resultCode")
+                        }
                     }
                 }
 
-                context.registerReceiver(sentReceiver, IntentFilter(sentAction))
-                context.registerReceiver(deliveredReceiver, IntentFilter(deliveredAction))
+                ContextCompat.registerReceiver(
+                    context, sentReceiver, IntentFilter(sentAction), ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+                ContextCompat.registerReceiver(
+                    context, deliveredReceiver, IntentFilter(deliveredAction), ContextCompat.RECEIVER_NOT_EXPORTED
+                )
 
-                val sentPI = PendingIntent.getBroadcast(context, uuid.hashCode(), Intent(sentAction),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                val deliveredPI = PendingIntent.getBroadcast(context, uuid.hashCode() + 1, Intent(deliveredAction),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
+                val sentIntents = ArrayList<PendingIntent>()
+                val deliveredIntents = ArrayList<PendingIntent>()
                 for (i in 0 until parts.size) {
                     sentIntents.add(sentPI)
                     deliveredIntents.add(deliveredPI)
@@ -468,8 +509,22 @@ class IntentDispatcher(private val context: Context) {
 
                 smsManager.sendMultipartTextMessage(number, null, parts, sentIntents, deliveredIntents)
                 Log.d("IntentDispatcher", "SMS sent to $contactName ($number): $messageBody")
+
+                // Carrier callbacks can be dropped silently (dead number, no signal); this stops
+                // the receivers from staying registered for the life of the process.
+                val sentRef = sentReceiver
+                val deliveredRef = deliveredReceiver
+                mainScope.launch {
+                    delay(SMS_CALLBACK_TIMEOUT_MS)
+                    if (sentSettled.get() && deliveredSettled.get()) return@launch
+                    Log.d("IntentDispatcher", "SMS callback window closed after ${SMS_CALLBACK_TIMEOUT_MS}ms")
+                    unregisterWhich(sentRef)
+                    unregisterWhich(deliveredRef)
+                }
             } catch (e: Exception) {
                 Log.e("IntentDispatcher", "SMS error", e)
+                unregisterWhich(sentReceiver)
+                unregisterWhich(deliveredReceiver)
                 toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
                     "result" to "ERROR", "message" to (e.message ?: "SMS failed")
                 ))
@@ -479,5 +534,9 @@ class IntentDispatcher(private val context: Context) {
 
     companion object {
         private const val PENDING_ACTION_TTL_MS = 10_000L
+        private const val SMS_CALLBACK_TIMEOUT_MS = 30_000L
+
+        // A stale confirm must not answer OK, or the model announces an action that never happened.
+        fun pendingActionResult(acted: Boolean): String = if (acted) "OK" else "NOTHING_PENDING"
     }
 }
