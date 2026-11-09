@@ -27,14 +27,25 @@ class IntentDispatcher(private val context: Context) {
 
     private val contactProvider = ContactProvider(context)
     private val contactMatcher = ContactMatcher()
+    private val usageStore = UsageStore(context)
 
     private val mainScope = MainScope()
 
     // Pending action gate — at most one at a time, expires after 60s
     private sealed class PendingAction {
         var createdAt: Long = System.currentTimeMillis()
-        class Call(val contactName: String, val number: String) : PendingAction()
-        class Sms(val contactName: String, val number: String, val messageBody: String) : PendingAction()
+        abstract val usageKey: String
+        class Call(
+            val contactName: String,
+            val number: String,
+            override val usageKey: String
+        ) : PendingAction()
+        class Sms(
+            val contactName: String,
+            val number: String,
+            val messageBody: String,
+            override val usageKey: String
+        ) : PendingAction()
     }
 
     private var pendingAction: PendingAction? = null
@@ -60,6 +71,7 @@ class IntentDispatcher(private val context: Context) {
         fun sendToolResponse(callId: String, functionName: String, resultMap: Map<String, Any>)
         fun sendAmbiguity(callId: String, matches: List<String>)
         fun vibrate()
+        fun announce(announcement: Announcement)
     }
 
 
@@ -161,10 +173,12 @@ class IntentDispatcher(private val context: Context) {
                 is MatchResult.ExactMatch -> {
                     lastDisambiguationNames = null  // clear disambiguation state
                     lastDisambiguationCandidates = null
+                    val contact = resolved.match.contact
                     toolCallback.vibrate()
                     pendingAction = PendingAction.Call(
-                        resolved.match.contact.name,
-                        resolved.match.contact.phoneNumber
+                        contact.name,
+                        contact.phoneNumber,
+                        usageKeyFor(contact.contactId, contact.normalizedName, contact.normalizedNumber)
                     )
                     awaitingConfirmationCallId = callId
                     Log.i("IntentDispatcher", "📞 Pending call stored: ${resolved.match.contact.name} — waiting for local confirmation")
@@ -323,7 +337,12 @@ class IntentDispatcher(private val context: Context) {
                         return@launch
                     }
                     toolCallback.vibrate()
-                    pendingAction = PendingAction.Sms(contact.name, number, messageBody)
+                    pendingAction = PendingAction.Sms(
+                        contact.name,
+                        number,
+                        messageBody,
+                        usageKeyFor(contact.contactId, contact.normalizedName, contact.normalizedNumber)
+                    )
                     awaitingConfirmationCallId = callId
                     Log.i("IntentDispatcher", "💬 Pending SMS stored: ${contact.name} ($number) — waiting for local confirmation")
                     val pendingSmsResultMap = mapOf(
@@ -381,12 +400,19 @@ class IntentDispatcher(private val context: Context) {
         when (action) {
             is PendingAction.Call -> {
                 Log.i("IntentDispatcher", "📞 Executing confirmed call: ${action.contactName} (${action.number})")
-                executeCall(action.contactName, action.number)
+                val placed = executeCall(action.contactName, action.number)
+                toolCallback.announce(if (placed) Announcements.CALL_PLACED else Announcements.CALL_NOT_PLACED)
+                // Only an action the user physically confirmed counts as usage — a search that
+                // ended in PENDING_CONFIRMATION and was cancelled, or merely re-asked about, must not.
+                usageStore.record(action.usageKey)
             }
             is PendingAction.Sms -> {
                 Log.i("IntentDispatcher", "💬 Executing confirmed SMS: ${action.contactName} (${action.number})")
-                // Pass a dummy callId since this is local
-                executeSms(action.number, action.messageBody, "local_confirm", action.contactName, toolCallback)
+                // No toolResponse here: the originating callId was already closed by
+                // PENDING_CONFIRMATION, so anything sent under a synthetic id is ignored by Gemini.
+                // The spoken outcome is the only thing the user gets, so it must not be silent.
+                executeSms(action.number, action.messageBody, action.contactName) { toolCallback.announce(it) }
+                usageStore.record(action.usageKey)
             }
         }
         return true
@@ -408,37 +434,44 @@ class IntentDispatcher(private val context: Context) {
         return false
     }
 
-    private fun executeCall(contactName: String, phoneNumber: String) {
+    /** @return false when CALL_PHONE was unavailable and only the dialer could be opened. */
+    private fun executeCall(contactName: String, phoneNumber: String): Boolean {
         val intent = Intent(Intent.ACTION_CALL).apply {
             data = Uri.parse("tel:$phoneNumber")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        try {
+        return try {
             context.startActivity(intent)
+            true
         } catch (e: SecurityException) {
+            Log.e("IntentDispatcher", "CALL_PHONE denied — falling back to the dialer", e)
             val dialIntent = Intent(Intent.ACTION_DIAL).apply {
                 data = Uri.parse("tel:$phoneNumber")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(dialIntent)
+            false
         }
     }
 
     private fun executeSms(
         number: String,
         messageBody: String,
-        callId: String,
         contactName: String,
-        toolCallback: ToolCallback
+        announce: (Announcement) -> Unit
     ) {
         mainScope.launch {
             var sentReceiver: BroadcastReceiver? = null
             var deliveredReceiver: BroadcastReceiver? = null
+            val sentRegistered = AtomicBoolean(false)
+            val deliveredRegistered = AtomicBoolean(false)
 
-            fun unregisterWhich(receiver: BroadcastReceiver?) {
+            fun unregisterWhich(receiver: BroadcastReceiver?, registered: AtomicBoolean) {
                 receiver ?: return
-                runCatching { context.unregisterReceiver(receiver) }
-                    .onFailure { Log.w("IntentDispatcher", "SMS receiver unregister failed: ${it.message}") }
+                unregisterOnce(registered) {
+                    runCatching { context.unregisterReceiver(receiver) }
+                        .onFailure { Log.w("IntentDispatcher", "SMS receiver unregister failed: ${it.message}") }
+                }
             }
 
             try {
@@ -466,17 +499,13 @@ class IntentDispatcher(private val context: Context) {
                 sentReceiver = object : BroadcastReceiver() {
                     override fun onReceive(ctx: Context, intent: Intent) {
                         if (!sentSettled.compareAndSet(false, true)) return
-                        unregisterWhich(this)
+                        unregisterWhich(this, sentRegistered)
                         if (resultCode == Activity.RESULT_OK) {
-                            Log.d("IntentDispatcher", "SMS sent successfully")
-                            toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
-                                "result" to "SENT", "name" to contactName, "number" to number
-                            ))
+                            Log.d("IntentDispatcher", "SMS sent successfully to $contactName ($number)")
+                            announce(Announcements.SMS_SENT)
                         } else {
                             Log.e("IntentDispatcher", "SMS send failed, resultCode=$resultCode")
-                            toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
-                                "result" to "ERROR", "message" to "SMS delivery failed (resultCode=$resultCode)"
-                            ))
+                            announce(Announcements.SMS_FAILED)
                         }
                     }
                 }
@@ -484,7 +513,7 @@ class IntentDispatcher(private val context: Context) {
                 deliveredReceiver = object : BroadcastReceiver() {
                     override fun onReceive(ctx: Context, intent: Intent) {
                         if (!deliveredSettled.compareAndSet(false, true)) return
-                        unregisterWhich(this)
+                        unregisterWhich(this, deliveredRegistered)
                         if (resultCode == Activity.RESULT_OK) {
                             Log.d("IntentDispatcher", "SMS delivered to $number")
                         } else {
@@ -496,9 +525,11 @@ class IntentDispatcher(private val context: Context) {
                 ContextCompat.registerReceiver(
                     context, sentReceiver, IntentFilter(sentAction), ContextCompat.RECEIVER_NOT_EXPORTED
                 )
+                sentRegistered.set(true)
                 ContextCompat.registerReceiver(
                     context, deliveredReceiver, IntentFilter(deliveredAction), ContextCompat.RECEIVER_NOT_EXPORTED
                 )
+                deliveredRegistered.set(true)
 
                 val sentIntents = ArrayList<PendingIntent>()
                 val deliveredIntents = ArrayList<PendingIntent>()
@@ -518,16 +549,19 @@ class IntentDispatcher(private val context: Context) {
                     delay(SMS_CALLBACK_TIMEOUT_MS)
                     if (sentSettled.get() && deliveredSettled.get()) return@launch
                     Log.d("IntentDispatcher", "SMS callback window closed after ${SMS_CALLBACK_TIMEOUT_MS}ms")
-                    unregisterWhich(sentRef)
-                    unregisterWhich(deliveredRef)
+                    unregisterWhich(sentRef, sentRegistered)
+                    unregisterWhich(deliveredRef, deliveredRegistered)
+                    // A dropped carrier callback is not proof of failure, so do not claim the message failed.
+                    if (!sentSettled.get()) {
+                        Log.w("IntentDispatcher", "No SMS sent callback — telling the user it is unconfirmed")
+                        announce(Announcements.SMS_UNCONFIRMED)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("IntentDispatcher", "SMS error", e)
-                unregisterWhich(sentReceiver)
-                unregisterWhich(deliveredReceiver)
-                toolCallback.sendToolResponse(callId, "send_text_message", mapOf(
-                    "result" to "ERROR", "message" to (e.message ?: "SMS failed")
-                ))
+                unregisterWhich(sentReceiver, sentRegistered)
+                unregisterWhich(deliveredReceiver, deliveredRegistered)
+                announce(Announcements.SMS_FAILED)
             }
         }
     }
@@ -538,5 +572,19 @@ class IntentDispatcher(private val context: Context) {
 
         // A stale confirm must not answer OK, or the model announces an action that never happened.
         fun pendingActionResult(acted: Boolean): String = if (acted) "OK" else "NOTHING_PENDING"
+
+        /**
+         * Runs [unregister] only if the receiver is still registered, and clears the flag first so
+         * concurrent callers can't both reach unregisterReceiver(). The SMS callbacks unregister
+         * themselves, so without this the 30s sweep double-unregisters and the platform throws
+         * "Receiver not registered".
+         *
+         * @return true if [unregister] ran
+         */
+        fun unregisterOnce(registered: AtomicBoolean, unregister: () -> Unit): Boolean {
+            if (!registered.compareAndSet(true, false)) return false
+            unregister()
+            return true
+        }
     }
 }

@@ -40,6 +40,8 @@ object ContactDedupe {
 
 class ContactProvider(private val context: Context) {
 
+    private val usageStore = UsageStore(context)
+
     fun fetchContacts(): List<Contact> {
         val contacts = mutableListOf<Contact>()
         val contentResolver = context.contentResolver
@@ -75,7 +77,47 @@ class ContactProvider(private val context: Context) {
     }
 
     fun fetchContactNames(): List<String> {
-        return fetchContacts().map { it.name }.distinct()
+        val starredIds = starredContactIds()
+        val entries = fetchContacts().map { contact ->
+            VocabEntry(
+                name = contact.name,
+                starred = contact.contactId in starredIds,
+                usageCount = usageStore.countFor(
+                    usageKeyFor(contact.contactId, contact.normalizedName, contact.normalizedNumber)
+                )
+            )
+        }
+        val ranked = VocabOrder.rank(entries)
+        Log.d("ContactProvider", "[VOCAB-ORDER] ${ranked.take(20)}")
+        return ranked
+    }
+
+    private fun starredContactIds(): Set<Long> {
+        val ids = mutableSetOf<Long>()
+        val projection = arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.STARRED)
+        val cursor: Cursor? = context.contentResolver.query(
+            ContactsContract.Contacts.CONTENT_URI,
+            projection,
+            null,
+            null,
+            null
+        )
+        cursor?.use {
+            val idIndex = it.getColumnIndex(ContactsContract.Contacts._ID)
+            val starIndex = it.getColumnIndex(ContactsContract.Contacts.STARRED)
+            if (idIndex < 0 || starIndex < 0) {
+                Log.w("ContactProvider", "STARRED column unreadable, ranking without starred contacts")
+                return emptySet()
+            }
+            while (it.moveToNext()) {
+                if (it.isNull(idIndex)) continue
+                // The provider hands STARRED back as an integer column on some ROMs and text on others
+                val starred = it.getString(starIndex)
+                if (!starred.isNullOrBlank() && starred != "0") ids.add(it.getLong(idIndex))
+            }
+        }
+        Log.d("ContactProvider", "Starred contacts: ${ids.size}")
+        return ids
     }
 
     private fun normalizeName(name: String): String {

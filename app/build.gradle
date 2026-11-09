@@ -11,8 +11,8 @@ android {
         applicationId "com.example.voicelauncher"
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -29,10 +29,25 @@ android {
         buildConfig true
     }
 
+    // ANDROID_ID is scoped to this certificate, so changing it re-pairs every tester.
+    // pilot.keystore is git-ignored: back it up and never regenerate it once testers are paired.
+    signingConfigs {
+        pilot {
+            storeFile rootProject.file('pilot.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.pilot
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.pilot
         }
     }
     testOptions {

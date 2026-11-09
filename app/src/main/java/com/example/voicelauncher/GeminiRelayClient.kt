@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 import android.os.Handler
 import android.os.Looper
 
-class GeminiRelayClient(private val url: String) {
+class GeminiRelayClient(private val url: String, private val identity: DeviceIdentity? = null) {
 
     private val TAG = "GeminiRelayClient"
 
@@ -34,6 +34,8 @@ class GeminiRelayClient(private val url: String) {
     private var lastContactNames: List<String> = emptyList()
     private var nextConnectionId = 0
     private var liveSockets = 0
+    private var terminalRefusal: Int? = null
+    private var lastAnnouncedRefusal: Int? = null
 
     interface RelayCallback {
         fun onConnected()
@@ -47,6 +49,9 @@ class GeminiRelayClient(private val url: String) {
     
     var onAudioDropped: (() -> Unit)? = null
     private var audioDroppedSignaled = false
+
+    var onPairing: ((status: String, reason: String, tester: String) -> Unit)? = null
+    var onRefusal: ((code: Int, reason: String) -> Unit)? = null
 
     fun resetAudioDroppedFlag() {
         audioDroppedSignaled = false
@@ -72,7 +77,32 @@ class GeminiRelayClient(private val url: String) {
         }, delayMs)
     }
 
+    private fun handleRefusal(code: Int, reason: String) {
+        reconnectHandler.removeCallbacksAndMessages(null)
+        reconnectAttempts = 0
+        val delayMs = RelayClosePolicy.retryDelayMs(code)
+        if (delayMs == null) {
+            terminalRefusal = code
+            shouldReconnect = false
+            Log.e(TAG, "TERMINAL REFUSAL code=$code reason=$reason — no reconnect until the app restarts")
+        } else {
+            Log.w(TAG, "REFUSAL code=$code reason=$reason — retrying in ${delayMs}ms")
+            reconnectHandler.postDelayed({
+                if (!isConnected && !isConnecting) connect()
+            }, delayMs)
+        }
+        // One spoken announcement per episode, not one per retry: the user is told once and then left in peace.
+        if (lastAnnouncedRefusal != code) {
+            lastAnnouncedRefusal = code
+            onRefusal?.invoke(code, reason)
+        }
+    }
+
     fun connect(contactNames: List<String> = emptyList()) {
+        terminalRefusal?.let {
+            Log.w(TAG, "Connect blocked by terminal refusal $it — the host must fix the pairing first")
+            return
+        }
         if (isConnected || isConnecting) {
             Log.d(TAG, "Already connected or connecting")
             return
@@ -95,6 +125,18 @@ class GeminiRelayClient(private val url: String) {
         if (base64Contacts.isNotEmpty()) {
             requestBuilder.header("X-Tsehaye-Contacts", base64Contacts)
         }
+        identity?.let { id ->
+            if (id.deviceId.isEmpty()) {
+                Log.e(TAG, "ANDROID_ID is empty — the relay will refuse this phone")
+            } else {
+                val token = id.token()
+                requestBuilder.header("X-Tsehaye-Device", id.deviceId)
+                requestBuilder.header("X-Tsehaye-Signature", id.signatureHash)
+                requestBuilder.header("X-Tsehaye-App-Version", id.appVersion)
+                if (token.isNotEmpty()) requestBuilder.header("X-Tsehaye-Token", token)
+                Log.d(TAG, "IDENTITY device=${id.deviceId} sig=${id.signatureHash.take(8)} version=${id.appVersion} tokenPresent=${token.isNotEmpty()}")
+            }
+        }
         Log.d(TAG, "Connecting with ${namesUsed.size} contacts, header chars=${base64Contacts.length}")
 
         val request = requestBuilder.build()
@@ -102,10 +144,12 @@ class GeminiRelayClient(private val url: String) {
         shouldReconnect = true
         isConnecting = true
         var opened = false
+        var refusalHandled = false
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempts = 0
                 audioDroppedSignaled = false
+                lastAnnouncedRefusal = null
                 opened = true
                 liveSockets++
                 Log.d(TAG, "OPEN id=$connectionId liveSockets=$liveSockets t=${System.currentTimeMillis()}")
@@ -119,15 +163,25 @@ class GeminiRelayClient(private val url: String) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d(TAG, "Text message: ${text.take(200)}")
-                // Log full incoming messages at WARN for confirmation gate debugging
-                if (text.contains("functionCall") || text.contains("functionResponse") || text.contains("PENDING")) {
-                    Log.w(TAG, "━━━ RAW INCOMING RELAY MESSAGE ━━━")
-                    Log.w(TAG, text)
-                    Log.w(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                }
                 try {
                     val json = JSONObject(text)
+                    if (json.optString("type") == "pairing") {
+                        // Logged without the token: a bearer credential must not land in logcat.
+                        val token = json.optString("token", "")
+                        identity?.saveToken(token)
+                        val status = json.optString("status", "")
+                        val reason = json.optString("reason", "")
+                        val tester = json.optString("tester", "")
+                        Log.i(TAG, "PAIRING status=$status reason=$reason tester=$tester tokenIssued=${token.isNotEmpty()}")
+                        onPairing?.invoke(status, reason, tester)
+                        return
+                    }
+                    Log.d(TAG, "Text message: ${text.take(200)}")
+                    if (text.contains("functionCall") || text.contains("functionResponse") || text.contains("PENDING")) {
+                        Log.w(TAG, "━━━ RAW INCOMING RELAY MESSAGE ━━━")
+                        Log.w(TAG, text)
+                        Log.w(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    }
                     callback?.onTextMessage(json)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to parse text message as JSON", e)
@@ -141,6 +195,10 @@ class GeminiRelayClient(private val url: String) {
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "Closing: code=$code reason=$reason")
+                if (RelayClosePolicy.isRefusal(code) && !refusalHandled) {
+                    refusalHandled = true
+                    handleRefusal(code, reason)
+                }
                 webSocket.close(code, reason)
                 isConnected = false
                 callback?.onDisconnected(reason)
@@ -154,7 +212,7 @@ class GeminiRelayClient(private val url: String) {
                 isConnecting = false
                 isConnected = false
                 callback?.onDisconnected(reason)
-                if (code != 1000) scheduleReconnect()
+                if (!refusalHandled && code != 1000) scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -165,7 +223,7 @@ class GeminiRelayClient(private val url: String) {
                 isConnecting = false
                 isConnected = false
                 callback?.onFailure(t.message ?: "Unknown WebSocket error")
-                scheduleReconnect()
+                if (!refusalHandled) scheduleReconnect()
             }
         })
     }

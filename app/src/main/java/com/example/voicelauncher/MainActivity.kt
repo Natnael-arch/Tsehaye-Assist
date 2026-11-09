@@ -16,7 +16,6 @@ import android.animation.AnimatorSet
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import java.io.File
 import androidx.core.view.GestureDetectorCompat
@@ -30,6 +29,9 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
 
     private companion object {
         const val HOLD_GATE_MS = 300L
+        val REFUSAL_RETRY = longArrayOf(0, 120, 120, 120)
+        val REFUSAL_TERMINAL = longArrayOf(0, 400, 200, 400)
+        val ANNOUNCEMENT_FAILED = longArrayOf(0, 600, 150, 600, 150, 600)
     }
 
     private lateinit var statusTextView: TextView
@@ -46,6 +48,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private lateinit var pcmPlayer: PcmPlayer
     private lateinit var gestureDetector: GestureDetectorCompat
     private lateinit var contactProvider: ContactProvider
+    private lateinit var deviceIdentity: DeviceIdentity
+    private lateinit var announcements: AnnouncementPlayer
 
     private var pulseAnimator: AnimatorSet? = null
     private var audioBuffer = ByteArrayOutputStream()
@@ -53,6 +57,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private var turnIndex = 0
     private val currentTurnToolCalls = mutableListOf<String>()
     private var isRecording = false
+    private var outageAnnounced = false
+    private val pendingAnnouncementFailures = mutableListOf<JSONObject>()
 
     // ── Hold gate: a press shorter than this must never reach the model ──
     private val captureHandler = Handler(Looper.getMainLooper())
@@ -106,13 +112,22 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         pcmPlayer = PcmPlayer()
         intentDispatcher = IntentDispatcher(this)
         contactProvider = ContactProvider(this)
+        deviceIdentity = DeviceIdentity(this)
+        announcements = AnnouncementPlayer(
+            context = this,
+            stopModelAudio = { pcmPlayer.stop("announcement") },
+            onFailed = { announcement, why -> onAnnouncementFailed(announcement, why) }
+        )
+        Log.i("VoiceLauncher", "[IDENTITY] device=${deviceIdentity.deviceId} sig=${deviceIdentity.signatureHash.take(8)} version=${deviceIdentity.appVersion} tokenPresent=${deviceIdentity.token().isNotEmpty()}")
 
-        relayClient = GeminiRelayClient(BuildConfig.RELAY_WS_URL)
+        relayClient = GeminiRelayClient(BuildConfig.RELAY_WS_URL, deviceIdentity)
         relayClient.callback = object : GeminiRelayClient.RelayCallback {
             override fun onConnected() {
                 runOnUiThread {
                     Log.d("VoiceLauncher", "WebSocket connected, waiting for setup")
+                    outageAnnounced = false
                     statusTextView.text = "Setting up..."
+                    flushAnnouncementFailures()
                 }
             }
 
@@ -137,8 +152,32 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             override fun onFailure(error: String) {
                 runOnUiThread {
                     Log.e("VoiceLauncher", "Relay failure: $error")
-                    Toast.makeText(this@MainActivity, "Connection error: $error", Toast.LENGTH_SHORT).show()
+                    statusTextView.text = "Offline"
+                    if (!outageAnnounced) {
+                        outageAnnounced = true
+                        announce(Announcements.CONNECTION_LOST)
+                    }
                 }
+            }
+        }
+
+        relayClient.onPairing = { status, reason, tester ->
+            runOnUiThread {
+                Log.i("VoiceLauncher", "[PAIRING] status=$status reason=$reason tester=$tester")
+                statusTextView.text = when (status) {
+                    "approved" -> if (tester.isNotEmpty()) "Ready 👂 ($tester)" else "Setting up..."
+                    "pending" -> "ምዝገና በመጠባበቅ ላይ"
+                    else -> "Offline"
+                }
+            }
+        }
+
+        relayClient.onRefusal = { code, reason ->
+            runOnUiThread {
+                Log.w("VoiceLauncher", "[REFUSAL] code=$code reason=$reason terminal=${RelayClosePolicy.isTerminal(code)}")
+                statusTextView.text = "Offline ($code)"
+                vibratePattern(if (RelayClosePolicy.isTerminal(code)) REFUSAL_TERMINAL else REFUSAL_RETRY)
+                announce(RelayClosePolicy.announcement(code))
             }
         }
 
@@ -147,10 +186,11 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                 if (isRecording) {
                     Log.w("VoiceLauncher", "Connection dropped mid-command, aborting recording.")
                     isRecording = false
+                    outageAnnounced = true
                     doublePulse(200)
                     stopVoiceCapture()
                     statusTextView.text = "Error: Connection lost. Try again."
-                    Toast.makeText(this@MainActivity, "Connection lost mid-speech. Please try again.", Toast.LENGTH_LONG).show()
+                    announce(Announcements.CONNECTION_LOST)
                 }
             }
         }
@@ -163,6 +203,8 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                     vibrateConfirm()
                     val acted = intentDispatcher.confirmPendingLocal(this@MainActivity)
                     runOnUiThread { statusTextView.text = if (acted) "Confirmed" else "Nothing pending" }
+                    // On success IntentDispatcher speaks the outcome; a stale tap must still be answered.
+                    if (!acted) announce(Announcements.NOTHING_PENDING)
                     return true
                 }
                 return false
@@ -173,6 +215,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                     vibrateReject()
                     val acted = intentDispatcher.cancelPendingLocal(this@MainActivity)
                     runOnUiThread { statusTextView.text = if (acted) "Cancelled" else "Nothing pending" }
+                    announce(if (acted) Announcements.CANCELLED else Announcements.NOTHING_PENDING)
                     return true
                 }
                 return false
@@ -234,6 +277,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         unregisterCallStateListener()
         relayClient.disconnect()
         pcmPlayer.stop()
+        announcements.release()
     }
 
     private fun registerCallStateListener() {
@@ -430,7 +474,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
                 val error = json.getJSONObject("error")
                 val msg = error.optString("message", "Unknown error")
                 Log.e("VoiceLauncher", "Server error: $msg")
-                runOnUiThread { statusTextView.text = "Error: $msg" }
+                runOnUiThread {
+                    statusTextView.text = "Error: $msg"
+                    announce(Announcements.UNAVAILABLE)
+                }
             }
             else -> {
                 Log.d("VoiceLauncher", "Unhandled relay message: ${json.toString().take(200)}")
@@ -553,6 +600,30 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
 
     override fun vibrate() {
         pulse(100)
+    }
+
+    override fun announce(announcement: Announcement) {
+        Log.i("VoiceLauncher", "[ANNOUNCE] clip=${announcement.clip} en=${announcement.english}")
+        announcements.play(announcement)
+    }
+
+    private fun onAnnouncementFailed(announcement: Announcement, why: String) {
+        vibratePattern(ANNOUNCEMENT_FAILED)
+        statusTextView.text = "Audio missing: ${announcement.clip}"
+        // A missing clip usually surfaces while the socket is closed, so the report waits for the next connection.
+        pendingAnnouncementFailures.add(JSONObject().apply {
+            put("type", "ANNOUNCEMENT_FAILED")
+            put("clip", announcement.clip)
+            put("why", why)
+        })
+        flushAnnouncementFailures()
+    }
+
+    private fun flushAnnouncementFailures() {
+        if (!relayClient.isConnected() || pendingAnnouncementFailures.isEmpty()) return
+        val reports = pendingAnnouncementFailures.toList()
+        pendingAnnouncementFailures.clear()
+        reports.forEach { relayClient.sendMessage(it) }
     }
 
     private fun pulse(duration: Long) {
@@ -716,6 +787,10 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         } else {
             Log.w("VoiceLauncher", "Relay not connected — cannot process voice")
             statusTextView.text = "Offline"
+            if (!outageAnnounced) {
+                outageAnnounced = true
+                announce(Announcements.UNAVAILABLE)
+            }
         }
         return true
     }
