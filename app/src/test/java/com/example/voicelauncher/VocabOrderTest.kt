@@ -97,6 +97,14 @@ class VocabOrderTest {
     }
 
     @Test
+    fun rankingIsCappedToHeaderLimitByDefault() {
+        val many = (1..150).map { entry("User $it a") }
+        val ranked = VocabOrder.rank(many)
+        assertEquals(VocabOrder.MAX_HEADER_ENTRIES, ranked.size)
+        assertEquals(100, ranked.size)
+    }
+
+    @Test
     fun equalRankKeepsTheFirstListedNameSoOrderingStaysDeterministic() {
         val ranked = VocabOrder.rank(listOf(entry("rodas"), entry("Rodas"), entry("Abebe")))
         assertEquals(listOf("Abebe", "rodas"), ranked)

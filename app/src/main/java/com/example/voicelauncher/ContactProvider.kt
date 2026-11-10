@@ -76,7 +76,7 @@ class ContactProvider(private val context: Context) {
         return deduped
     }
 
-    fun fetchContactNames(): List<String> {
+    fun fetchContactNames(limit: Int = VocabOrder.MAX_HEADER_ENTRIES): List<String> {
         val starredIds = starredContactIds()
         val entries = fetchContacts().map { contact ->
             VocabEntry(
@@ -87,7 +87,7 @@ class ContactProvider(private val context: Context) {
                 )
             )
         }
-        val ranked = VocabOrder.rank(entries)
+        val ranked = VocabOrder.rank(entries, limit)
         Log.d("ContactProvider", "[VOCAB-ORDER] ${ranked.take(20)}")
         return ranked
     }

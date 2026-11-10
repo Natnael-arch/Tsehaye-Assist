@@ -114,7 +114,7 @@ class GeminiRelayClient(private val url: String, private val identity: DeviceIde
         if (contactNames.isNotEmpty()) {
             lastContactNames = contactNames
         }
-        val namesUsed = if (contactNames.isNotEmpty()) contactNames else lastContactNames
+        val namesUsed = (if (contactNames.isNotEmpty()) contactNames else lastContactNames).take(MAX_HEADER_CONTACTS)
         val requestBuilder = Request.Builder().url(url)
         val base64Contacts = if (namesUsed.isNotEmpty()) {
             val jsonArray = org.json.JSONArray(namesUsed)
@@ -324,4 +324,8 @@ class GeminiRelayClient(private val url: String, private val identity: DeviceIde
     fun isConnected(): Boolean = isConnected
 
     fun hasContacts(): Boolean = lastContactNames.isNotEmpty()
+
+    companion object {
+        const val MAX_HEADER_CONTACTS = 100
+    }
 }

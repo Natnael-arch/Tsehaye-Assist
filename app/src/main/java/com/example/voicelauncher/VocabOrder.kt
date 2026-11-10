@@ -25,6 +25,8 @@ fun usageKeyFor(contactId: Long, normalizedName: String, normalizedNumber: Strin
  */
 object VocabOrder {
 
+    const val MAX_HEADER_ENTRIES = 100
+
     private val TRAILING_PUNCTUATION = Regex("[\\s.,_\\-]+$")
     private val TRAILING_DIGITS = Regex("\\s*[0-9]+$")
     private val REPEATED_SPACES = Regex("\\s+")
@@ -36,7 +38,7 @@ object VocabOrder {
         return name.replace(REPEATED_SPACES, " ").trim()
     }
 
-    fun rank(entries: List<VocabEntry>): List<String> {
+    fun rank(entries: List<VocabEntry>, limit: Int = MAX_HEADER_ENTRIES): List<String> {
         val cleaned = entries
             .map { it.copy(name = cleanName(it.name)) }
             .filter { it.name.isNotBlank() }
@@ -44,8 +46,9 @@ object VocabOrder {
             .thenByDescending { it.usageCount }
             .thenBy { it.name.lowercase() }
         val seen = HashSet<String>()
-        return cleaned.sortedWith(order)
+        val result = cleaned.sortedWith(order)
             .filter { seen.add(it.name.lowercase()) }
             .map { it.name }
+        return if (limit > 0) result.take(limit) else result
     }
 }

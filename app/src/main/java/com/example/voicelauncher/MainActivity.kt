@@ -277,7 +277,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         unregisterCallStateListener()
         relayClient.disconnect()
         pcmPlayer.stop()
-        announcements.release()
+        announcements.shutdown()
     }
 
     private fun registerCallStateListener() {

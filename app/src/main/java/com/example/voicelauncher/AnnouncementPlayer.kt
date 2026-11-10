@@ -6,7 +6,10 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import java.util.Locale
 
 class AnnouncementPlayer(
     private val context: Context,
@@ -25,11 +28,37 @@ class AnnouncementPlayer(
         .build()
 
     private var player: MediaPlayer? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    init {
+        try {
+            tts = TextToSpeech(context.applicationContext) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    tts?.language = Locale.US
+                    ttsReady = true
+                    tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {}
+                        override fun onDone(utteranceId: String?) {
+                            audioManager.abandonAudioFocusRequest(focusRequest)
+                        }
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {
+                            audioManager.abandonAudioFocusRequest(focusRequest)
+                        }
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "TTS fallback initialization failed", e)
+        }
+    }
 
     fun play(announcement: Announcement) {
         val resId = context.resources.getIdentifier(announcement.clip, "raw", context.packageName)
         if (resId == 0) {
             fail(announcement, "clip_missing")
+            speakFallback(announcement)
             return
         }
         release()
@@ -60,16 +89,40 @@ class AnnouncementPlayer(
         }
     }
 
-    fun release() {
-        val mp = player ?: return
-        player = null
+    private fun speakFallback(announcement: Announcement) {
+        if (!ttsReady || tts == null) return
         try {
-            mp.stop()
+            stopModelAudio()
+            audioManager.requestAudioFocus(focusRequest)
+            tts?.speak(announcement.english, TextToSpeech.QUEUE_FLUSH, null, announcement.clip)
         } catch (e: Exception) {
-            // not prepared yet
+            Log.e(TAG, "TTS speak failed", e)
         }
-        mp.release()
-        audioManager.abandonAudioFocusRequest(focusRequest)
+    }
+
+    fun release() {
+        val mp = player
+        player = null
+        if (mp != null) {
+            try {
+                mp.stop()
+            } catch (e: Exception) {
+                // not prepared yet
+            }
+            mp.release()
+            audioManager.abandonAudioFocusRequest(focusRequest)
+        }
+    }
+
+    fun shutdown() {
+        release()
+        try {
+            tts?.stop()
+            tts?.shutdown()
+            tts = null
+        } catch (e: Exception) {
+            // ignore
+        }
     }
 
     private fun fail(announcement: Announcement, why: String) {
