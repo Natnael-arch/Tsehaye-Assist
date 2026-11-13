@@ -3,6 +3,7 @@ package com.example.voicelauncher
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.*
 import android.util.Base64
@@ -257,6 +258,24 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         registerCallStateListener()
 
         relayClient.connect(getContactNamesIfPermitted())
+        handleTestIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleTestIntent(intent)
+    }
+
+    private fun handleTestIntent(intent: Intent?) {
+        val clip = intent?.getStringExtra("test_announcement") ?: return
+        Log.i("VoiceLauncher", "[TEST_INTENT] Requested announcement: $clip")
+        val target = Announcements.ALL.find { it.clip == clip }
+        if (target != null) {
+            announce(target)
+        } else {
+            Log.w("VoiceLauncher", "[TEST_INTENT] Unknown announcement clip: $clip")
+        }
     }
 
     private fun getContactNamesIfPermitted(): List<String> {

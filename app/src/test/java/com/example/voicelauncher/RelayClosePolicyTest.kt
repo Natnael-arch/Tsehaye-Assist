@@ -83,4 +83,15 @@ class AnnouncementsTest {
             "am_call_placed", "am_call_not_placed", "am_sms_sent", "am_sms_failed", "am_sms_unconfirmed"
         ).forEach { assertTrue("$it is missing from the recording list", clips.contains(it)) }
     }
+
+    @Test
+    fun `all raw audio clips exist and are non-empty`() {
+        val rawDir = java.io.File("src/main/res/raw")
+        assertTrue("res/raw directory must exist", rawDir.isDirectory)
+        for (a in Announcements.ALL) {
+            val clipFile = java.io.File(rawDir, "${a.clip}.mp3")
+            assertTrue("Missing audio file for ${a.clip}: ${clipFile.path}", clipFile.isFile)
+            assertTrue("${a.clip}.mp3 is too small (${clipFile.length()} bytes)", clipFile.length() > 1000)
+        }
+    }
 }
