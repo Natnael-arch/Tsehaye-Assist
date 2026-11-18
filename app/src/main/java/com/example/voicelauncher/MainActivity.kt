@@ -200,6 +200,13 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
 
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // During disambiguation: single tap = pick 1st candidate (index 0)
+                if (intentDispatcher.isAwaitingDisambiguation) {
+                    vibratePick()
+                    intentDispatcher.selectDisambiguationCandidate(0, this@MainActivity)
+                    runOnUiThread { statusTextView.text = "ማረጋገጫ ይጠብቃል" }
+                    return true
+                }
                 if (intentDispatcher.isAwaitingConfirmation) {
                     vibrateConfirm()
                     val acted = intentDispatcher.confirmPendingLocal(this@MainActivity)
@@ -212,6 +219,13 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
+                // During disambiguation: double tap = pick 2nd candidate (index 1)
+                if (intentDispatcher.isAwaitingDisambiguation) {
+                    vibratePick()
+                    intentDispatcher.selectDisambiguationCandidate(1, this@MainActivity)
+                    runOnUiThread { statusTextView.text = "ማረጋገጫ ይጠብቃል" }
+                    return true
+                }
                 if (intentDispatcher.isAwaitingConfirmation) {
                     vibrateReject()
                     val acted = intentDispatcher.cancelPendingLocal(this@MainActivity)
@@ -224,7 +238,7 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
         })
 
         touchArea.setOnTouchListener { _, event ->
-            if (intentDispatcher.isAwaitingConfirmation) {
+            if (intentDispatcher.isAwaitingDisambiguation || intentDispatcher.isAwaitingConfirmation) {
                 gestureDetector.onTouchEvent(event)
                 true
             } else {
@@ -672,6 +686,11 @@ class MainActivity : AppCompatActivity(), IntentDispatcher.ToolCallback {
     private fun vibrateReject() {
         // One longer pulse
         vibratePattern(longArrayOf(0, 300))
+    }
+
+    private fun vibratePick() {
+        // Two short pulses — distinct "selection" feel used during disambiguation
+        vibratePattern(longArrayOf(0, 150, 100, 150))
     }
 
     private fun vibratePattern(pattern: LongArray) {

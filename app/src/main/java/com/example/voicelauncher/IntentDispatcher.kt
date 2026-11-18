@@ -53,6 +53,9 @@ class IntentDispatcher(private val context: Context) {
     val isAwaitingConfirmation: Boolean
         get() = pendingAction != null
 
+    val isAwaitingDisambiguation: Boolean
+        get() = lastDisambiguationCandidates != null
+
     fun resetPendingActionTimer() {
         pendingAction?.createdAt = System.currentTimeMillis()
     }
@@ -166,7 +169,11 @@ class IntentDispatcher(private val context: Context) {
 
         mainScope.launch {
             val contacts = withContext(Dispatchers.IO) { contactProvider.fetchContacts() }
-            val resolved = ContactResolver.resolve(rawName, contacts, lastDisambiguationCandidates)
+            // If disambiguation is active, restrict search to only the offered candidates.
+            // This prevents Gemini's follow-up call (which re-sends the original name) from
+            // re-scanning all contacts and causing an infinite disambiguation loop.
+            val searchPool = if (!lastDisambiguationCandidates.isNullOrEmpty()) lastDisambiguationCandidates!! else contacts
+            val resolved = ContactResolver.resolve(rawName, searchPool, lastDisambiguationCandidates)
             Log.d("IntentDispatcher", "search_contacts path: ${resolved.path}")
 
             when (resolved.match) {
@@ -215,6 +222,40 @@ class IntentDispatcher(private val context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Called when the user resolves disambiguation by tapping (single tap = index 0, double tap = index 1).
+     * Bypasses Gemini entirely: sets the pending call directly and waits for local touch confirmation.
+     */
+    fun selectDisambiguationCandidate(index: Int, toolCallback: ToolCallback) {
+        val candidates = lastDisambiguationCandidates ?: run {
+            Log.w("IntentDispatcher", "selectDisambiguationCandidate($index) called but no candidates active")
+            return
+        }
+        if (index < 0 || index >= candidates.size) {
+            Log.w("IntentDispatcher", "selectDisambiguationCandidate($index) out of range (${candidates.size} candidates)")
+            return
+        }
+        val contact = candidates[index]
+        Log.i("IntentDispatcher", "DISAMBIGUATION TAP: index=$index → ${contact.name} (${contact.phoneNumber})")
+
+        // Clear disambiguation state
+        lastDisambiguationNames = null
+        lastDisambiguationCandidates = null
+        lastSearchRawName = null
+
+        // Set pending call — user still needs to confirm with single tap
+        toolCallback.vibrate()
+        pendingAction = PendingAction.Call(
+            contact.name,
+            contact.phoneNumber,
+            usageKeyFor(contact.contactId, contact.normalizedName, contact.normalizedNumber)
+        )
+        // Use a synthetic call ID — the original functionCall ID was consumed when AMBIGUITY was sent.
+        // awaitingConfirmationCallId stays null so the confirmation gate uses the local path only.
+        awaitingConfirmationCallId = null
+        Log.i("IntentDispatcher", "DISAMBIGUATION TAP: pendingCall set for ${contact.name}, awaiting local confirm tap")
     }
 
     private fun handleAddNewContact(
